@@ -1,17 +1,15 @@
 from fastapi import FastAPI
 
-from backend.core.config import get_settings
-
-
-settings = get_settings()
+from backend.api.exception_handlers import app_exception_handler
+from backend.core.exceptions import AppException
 
 app = FastAPI(
-    title=settings.app_name,
-    version=settings.app_version,
-    debug=settings.debug,
+    title="Nexora Backend",
 )
+
+app.add_exception_handler(AppException, app_exception_handler)
 
 
 @app.get("/")
-async def root():
+async def root() -> dict[str, str]:
     return {"message": "Nexora Backend is running"}
