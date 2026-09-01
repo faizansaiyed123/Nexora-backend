@@ -14,6 +14,7 @@ app.add_exception_handler(AppException, app_exception_handler)
 
 app.include_router(api_router)
 
+
 @app.get("/")
 async def root() -> dict[str, str]:
     return {"message": "Nexora Backend is running"}
