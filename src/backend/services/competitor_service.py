@@ -6,12 +6,10 @@ This prevents users from accessing competitors belonging to another client.
 """
 
 import uuid
-from typing import List
+from typing import List 
 from backend.core.exceptions import ForbiddenException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from backend.core.exceptions import ForbiddenException
 from backend.models.client import ClientModel
 from backend.models.competitor import CompetitorModel
 from backend.schemas.competitor import (
