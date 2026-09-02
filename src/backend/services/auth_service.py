@@ -68,7 +68,8 @@ class AuthService:
         if existing_user.scalar_one_or_none():
             raise ConflictException("An account with this email address already exists.", code="EMAIL_ALREADY_EXISTS")
 
-        base_slug = data.organization_slug or generate_slug_from_name(data.organization_name)
+        base_slug = generate_slug_from_name(data.organization_name)
+
         existing_client = await session.execute(
             select(ClientModel).where(ClientModel.slug == base_slug)
         )
