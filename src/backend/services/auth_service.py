@@ -58,7 +58,7 @@ class AuthService:
         data: RegisterRequest,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
-    ) -> Tuple[UserModel, str, str, int]:
+    ) -> UserModel:
         clean_email = validate_and_normalize_email(data.email)
         validate_password_strength(data.password)
 
@@ -96,6 +96,7 @@ class AuthService:
             hashed_password=hashed_password,
             role=RoleEnum.ORG_ADMIN,
             is_active=True,
+            email_verified=False,
         )
         session.add(user)
         await session.flush()
