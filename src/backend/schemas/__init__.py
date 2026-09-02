@@ -1,6 +1,5 @@
 """
-Central schemas registry for Nexora Price Intelligence Platform.
-Exports all Pydantic v2 DTOs for request/response serialization across API endpoints.
+Central export registry for all Nexora Pydantic Schemas and DTOs.
 """
 
 from backend.schemas.alert import (
@@ -11,9 +10,19 @@ from backend.schemas.alert import (
 )
 from backend.schemas.audit import AuditLogRead
 from backend.schemas.client import (
+    ChangePasswordRequest,
     ClientCreate,
     ClientRead,
     ClientUpdate,
+    CurrentUserResponse,
+    ForgotPasswordRequest,
+    LoginRequest,
+    LogoutRequest,
+    MessageResponse,
+    RefreshTokenRequest,
+    RegisterRequest,
+    ResendVerificationRequest,
+    ResetPasswordRequest,
     TokenPayload,
     TokenResponse,
     UserCreate,
@@ -66,14 +75,24 @@ __all__ = [
     "UserRead",
     "TokenResponse",
     "TokenPayload",
-    # Offering & Dynamic Fields
+    "RegisterRequest",
+    "LoginRequest",
+    "RefreshTokenRequest",
+    "LogoutRequest",
+    "ForgotPasswordRequest",
+    "ResetPasswordRequest",
+    "ChangePasswordRequest",
+    "ResendVerificationRequest",
+    "MessageResponse",
+    "CurrentUserResponse",
+    # Offering Catalog
     "DynamicFieldDefinitionCreate",
     "DynamicFieldDefinitionRead",
     "OfferingCreate",
     "OfferingUpdate",
     "OfferingRead",
     "OfferingFilterParams",
-    # Competitor, Source & Match
+    # Competitor & Sources
     "CompetitorCreate",
     "CompetitorUpdate",
     "CompetitorRead",
@@ -86,7 +105,7 @@ __all__ = [
     "OfferingMatchCreate",
     "OfferingMatchUpdate",
     "OfferingMatchRead",
-    # Observation, Jobs & Snapshots
+    # Observation & Ingestion
     "JobCreate",
     "JobRead",
     "ObservationIngest",
@@ -94,11 +113,10 @@ __all__ = [
     "SnapshotRead",
     "PriceHistoryPoint",
     "PriceTrendResponse",
-    # Alerts
+    # Alerts & Audit
     "AlertRuleCreate",
     "AlertRuleUpdate",
     "AlertRuleRead",
     "AlertLogRead",
-    # Audit
     "AuditLogRead",
 ]
