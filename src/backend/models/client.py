@@ -28,14 +28,17 @@ class ClientModel(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    slug: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    slug: Mapped[str] = mapped_column(
+        String(255), unique=True, nullable=False, index=True)
     status: Mapped[ClientStatusEnum] = mapped_column(
         Enum(ClientStatusEnum, name="client_status_enum", native_enum=False),
         default=ClientStatusEnum.ACTIVE,
         nullable=False,
     )
-    max_competitors: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
-    max_tracked_offerings: Mapped[int] = mapped_column(Integer, default=500, nullable=False)
+    max_competitors: Mapped[int] = mapped_column(
+        Integer, default=10, nullable=False)
+    max_tracked_offerings: Mapped[int] = mapped_column(
+        Integer, default=500, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -80,6 +83,12 @@ class UserModel(Base):
         ForeignKey("clients.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
+    )
+
+    email_verified: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
     )
 
     email: Mapped[str] = mapped_column(
