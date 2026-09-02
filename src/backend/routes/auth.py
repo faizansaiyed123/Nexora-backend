@@ -1,205 +1,205 @@
-"""
-Authentication & Multi-Tenant Account REST API endpoints.
-"""
+# """
+# Authentication & Multi-Tenant Account REST API endpoints.
+# """
 
-from typing import Annotated
-from fastapi import APIRouter, Depends, Request, status
-from sqlalchemy.ext.asyncio import AsyncSession
+# from typing import Annotated
+# from fastapi import APIRouter, Depends, Request, status
+# from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.api.deps import get_current_user_claims, get_current_user_db, get_db
-from backend.core.rate_limit import DistributedRateLimiter
-from backend.models.client import UserModel
-from backend.schemas.client import (
-    ChangePasswordRequest,
-    CurrentUserResponse,
-    ForgotPasswordRequest,
-    LoginRequest,
-    LogoutRequest,
-    MessageResponse,
-    RefreshTokenRequest,
-    RegisterRequest,
-    ResendVerificationRequest,
-    ResetPasswordRequest,
-    TokenResponse,
-    UserRead,
-)
-from backend.services.auth_service import AuthService
+# from backend.api.deps import get_current_user_claims, get_current_user_db, get_db
+# from backend.core.rate_limit import DistributedRateLimiter
+# from backend.models.client import UserModel
+# from backend.schemas.client import (
+#     ChangePasswordRequest,
+#     CurrentUserResponse,
+#     ForgotPasswordRequest,
+#     LoginRequest,
+#     LogoutRequest,
+#     MessageResponse,
+#     RefreshTokenRequest,
+#     RegisterRequest,
+#     ResendVerificationRequest,
+#     ResetPasswordRequest,
+#     TokenResponse,
+#     UserRead,
+# )
+# from backend.services.auth_service import AuthService
 
-router = APIRouter(prefix="/auth", tags=["Authentication"])
-
-
-@router.post("/register", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
-async def register(
-    request: Request,
-    data: RegisterRequest,
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
-    client_ip = request.client.host if request.client else "127.0.0.1"
-    user_agent = request.headers.get("user-agent")
-
-    await DistributedRateLimiter.check_rate_limit("register", client_ip, max_requests=10, window_seconds=3600)
-
-    user = await AuthService.register_tenant(
-        session=db,
-        data=data,
-        ip_address=client_ip,
-        user_agent=user_agent,
-    )
-    await db.commit()
-
-    return MessageResponse(
-        message="Registration successful. Email verification required. Please check your inbox to verify your account."
-    )
+# router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
-@router.get("/verify-email", response_model=MessageResponse)
-async def verify_email(
-    token: str,
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
-    await AuthService.verify_email(
-        session=db,
-        token=token,
-    )
+# @router.post("/register", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
+# async def register(
+#     request: Request,
+#     data: RegisterRequest,
+#     db: Annotated[AsyncSession, Depends(get_db)],
+# ):
+#     client_ip = request.client.host if request.client else "127.0.0.1"
+#     user_agent = request.headers.get("user-agent")
 
-    await db.commit()
+#     await DistributedRateLimiter.check_rate_limit("register", client_ip, max_requests=10, window_seconds=3600)
 
-    return MessageResponse(
-        message="Email address successfully verified. You can now log in."
-    )
+#     user = await AuthService.register_tenant(
+#         session=db,
+#         data=data,
+#         ip_address=client_ip,
+#         user_agent=user_agent,
+#     )
+#     await db.commit()
 
-
-@router.post("/login", response_model=TokenResponse)
-async def login(
-    request: Request,
-    data: LoginRequest,
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
-    client_ip = request.client.host if request.client else "127.0.0.1"
-    user_agent = request.headers.get("user-agent")
-
-    await DistributedRateLimiter.check_rate_limit("login_ip", client_ip, max_requests=20, window_seconds=60)
-    await DistributedRateLimiter.check_rate_limit("login_email", data.email.lower(), max_requests=10, window_seconds=60)
-
-    user, access_token, refresh_token, expires_in = await AuthService.authenticate_user(
-        session=db,
-        data=data,
-        ip_address=client_ip,
-        user_agent=user_agent,
-    )
-    await db.commit()
-
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        token_type="bearer",
-        expires_in=expires_in,
-        user=UserRead.model_validate(user),
-    )
+#     return MessageResponse(
+#         message="Registration successful. Email verification required. Please check your inbox to verify your account."
+#     )
 
 
-@router.post("/refresh", response_model=TokenResponse)
-async def refresh_tokens(
-    data: RefreshTokenRequest,
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
-    user, access_token, new_refresh_token, expires_in = await AuthService.refresh_tokens(
-        session=db,
-        refresh_token_string=data.refresh_token,
-    )
-    await db.commit()
+# @router.get("/verify-email", response_model=MessageResponse)
+# async def verify_email(
+#     token: str,
+#     db: Annotated[AsyncSession, Depends(get_db)],
+# ):
+#     await AuthService.verify_email(
+#         session=db,
+#         token=token,
+#     )
 
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=new_refresh_token,
-        token_type="bearer",
-        expires_in=expires_in,
-        user=UserRead.model_validate(user),
-    )
+#     await db.commit()
+
+#     return MessageResponse(
+#         message="Email address successfully verified. You can now log in."
+#     )
 
 
-@router.post("/logout", response_model=MessageResponse)
-async def logout(
-    data: LogoutRequest,
-):
-    if data.refresh_token:
-        parts = data.refresh_token.split(":")
-        if len(parts) == 3:
-            user_id_str, session_id, _ = parts
-            from backend.core.rate_limit import get_redis_client
-            redis = await get_redis_client()
-            if redis:
-                await redis.delete(f"refresh:{user_id_str}:{session_id}")
+# @router.post("/login", response_model=TokenResponse)
+# async def login(
+#     request: Request,
+#     data: LoginRequest,
+#     db: Annotated[AsyncSession, Depends(get_db)],
+# ):
+#     client_ip = request.client.host if request.client else "127.0.0.1"
+#     user_agent = request.headers.get("user-agent")
 
-    return MessageResponse(message="Successfully logged out.")
+#     await DistributedRateLimiter.check_rate_limit("login_ip", client_ip, max_requests=20, window_seconds=60)
+#     await DistributedRateLimiter.check_rate_limit("login_email", data.email.lower(), max_requests=10, window_seconds=60)
 
+#     user, access_token, refresh_token, expires_in = await AuthService.authenticate_user(
+#         session=db,
+#         data=data,
+#         ip_address=client_ip,
+#         user_agent=user_agent,
+#     )
+#     await db.commit()
 
-@router.post("/forgot-password", response_model=MessageResponse)
-async def forgot_password(
-    request: Request,
-    data: ForgotPasswordRequest,
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
-    client_ip = request.client.host if request.client else "127.0.0.1"
-    user_agent = request.headers.get("user-agent")
-
-    await DistributedRateLimiter.check_rate_limit("forgot_pwd", client_ip, max_requests=5, window_seconds=3600)
-
-    await AuthService.request_password_reset(
-        session=db,
-        email=data.email,
-        ip_address=client_ip,
-        user_agent=user_agent,
-    )
-    await db.commit()
-
-    return MessageResponse(message="If the account exists, a password reset email has been sent.")
+#     return TokenResponse(
+#         access_token=access_token,
+#         refresh_token=refresh_token,
+#         token_type="bearer",
+#         expires_in=expires_in,
+#         user=UserRead.model_validate(user),
+#     )
 
 
-@router.post("/reset-password", response_model=MessageResponse)
-async def reset_password(
-    request: Request,
-    data: ResetPasswordRequest,
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
-    client_ip = request.client.host if request.client else "127.0.0.1"
-    user_agent = request.headers.get("user-agent")
+# @router.post("/refresh", response_model=TokenResponse)
+# async def refresh_tokens(
+#     data: RefreshTokenRequest,
+#     db: Annotated[AsyncSession, Depends(get_db)],
+# ):
+#     user, access_token, new_refresh_token, expires_in = await AuthService.refresh_tokens(
+#         session=db,
+#         refresh_token_string=data.refresh_token,
+#     )
+#     await db.commit()
 
-    await AuthService.reset_password(
-        session=db,
-        data=data,
-        ip_address=client_ip,
-        user_agent=user_agent,
-    )
-    await db.commit()
-
-    return MessageResponse(message="Password has been successfully reset. Please log in with your new password.")
-
-
-@router.post("/change-password", response_model=MessageResponse)
-async def change_password(
-    request: Request,
-    data: ChangePasswordRequest,
-    current_user: Annotated[UserModel, Depends(get_current_user_db)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-):
-    client_ip = request.client.host if request.client else "127.0.0.1"
-    user_agent = request.headers.get("user-agent")
-
-    await AuthService.change_password(
-        session=db,
-        current_user=current_user,
-        data=data,
-        ip_address=client_ip,
-        user_agent=user_agent,
-    )
-    await db.commit()
-
-    return MessageResponse(message="Password successfully updated.")
+#     return TokenResponse(
+#         access_token=access_token,
+#         refresh_token=new_refresh_token,
+#         token_type="bearer",
+#         expires_in=expires_in,
+#         user=UserRead.model_validate(user),
+#     )
 
 
-@router.get("/me", response_model=CurrentUserResponse)
-async def get_current_user_profile(
-    current_user: Annotated[UserModel, Depends(get_current_user_db)],
-):
-    return current_user
+# @router.post("/logout", response_model=MessageResponse)
+# async def logout(
+#     data: LogoutRequest,
+# ):
+#     if data.refresh_token:
+#         parts = data.refresh_token.split(":")
+#         if len(parts) == 3:
+#             user_id_str, session_id, _ = parts
+#             from backend.core.rate_limit import get_redis_client
+#             redis = await get_redis_client()
+#             if redis:
+#                 await redis.delete(f"refresh:{user_id_str}:{session_id}")
+
+#     return MessageResponse(message="Successfully logged out.")
+
+
+# @router.post("/forgot-password", response_model=MessageResponse)
+# async def forgot_password(
+#     request: Request,
+#     data: ForgotPasswordRequest,
+#     db: Annotated[AsyncSession, Depends(get_db)],
+# ):
+#     client_ip = request.client.host if request.client else "127.0.0.1"
+#     user_agent = request.headers.get("user-agent")
+
+#     await DistributedRateLimiter.check_rate_limit("forgot_pwd", client_ip, max_requests=5, window_seconds=3600)
+
+#     await AuthService.request_password_reset(
+#         session=db,
+#         email=data.email,
+#         ip_address=client_ip,
+#         user_agent=user_agent,
+#     )
+#     await db.commit()
+
+#     return MessageResponse(message="If the account exists, a password reset email has been sent.")
+
+
+# @router.post("/reset-password", response_model=MessageResponse)
+# async def reset_password(
+#     request: Request,
+#     data: ResetPasswordRequest,
+#     db: Annotated[AsyncSession, Depends(get_db)],
+# ):
+#     client_ip = request.client.host if request.client else "127.0.0.1"
+#     user_agent = request.headers.get("user-agent")
+
+#     await AuthService.reset_password(
+#         session=db,
+#         data=data,
+#         ip_address=client_ip,
+#         user_agent=user_agent,
+#     )
+#     await db.commit()
+
+#     return MessageResponse(message="Password has been successfully reset. Please log in with your new password.")
+
+
+# @router.post("/change-password", response_model=MessageResponse)
+# async def change_password(
+#     request: Request,
+#     data: ChangePasswordRequest,
+#     current_user: Annotated[UserModel, Depends(get_current_user_db)],
+#     db: Annotated[AsyncSession, Depends(get_db)],
+# ):
+#     client_ip = request.client.host if request.client else "127.0.0.1"
+#     user_agent = request.headers.get("user-agent")
+
+#     await AuthService.change_password(
+#         session=db,
+#         current_user=current_user,
+#         data=data,
+#         ip_address=client_ip,
+#         user_agent=user_agent,
+#     )
+#     await db.commit()
+
+#     return MessageResponse(message="Password successfully updated.")
+
+
+# @router.get("/me", response_model=CurrentUserResponse)
+# async def get_current_user_profile(
+#     current_user: Annotated[UserModel, Depends(get_current_user_db)],
+# ):
+#     return current_user
