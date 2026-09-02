@@ -1,16 +1,19 @@
 """
-Pydantic schemas for Multi-Tenant Clients, Users, and Authentication.
+Pydantic schemas for Multi-Tenant Clients, Users, and Authentication DTOs.
 """
 
 import re
 import uuid
 from datetime import datetime
 from typing import Optional
-
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from backend.models.enums import ClientStatusEnum, RoleEnum
 
+
+# ==========================================
+# Client (Tenant) DTOs
+# ==========================================
 
 class ClientBase(BaseModel):
     name: str = Field(..., min_length=2, max_length=255, description="Tenant organization name")
@@ -49,6 +52,10 @@ class ClientRead(ClientBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+# ==========================================
+# User DTOs
+# ==========================================
+
 class UserBase(BaseModel):
     email: EmailStr
     full_name: str = Field(..., min_length=2, max_length=255)
@@ -78,11 +85,59 @@ class UserRead(UserBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+# ==========================================
+# Authentication & Tenant Onboarding Requests & Responses
+# ==========================================
+
+class RegisterRequest(BaseModel):
+    organization_name: str = Field(..., min_length=2, max_length=255, description="Tenant organization name")
+    organization_slug: Optional[str] = Field(None, min_length=2, max_length=100, description="Optional custom organization slug")
+    full_name: str = Field(..., min_length=2, max_length=255, description="Initial Admin full name")
+    email: EmailStr = Field(..., description="Corporate email address")
+    password: str = Field(..., min_length=8, max_length=128, description="Strong password")
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr = Field(..., description="User email address")
+    password: str = Field(..., min_length=1, max_length=128, description="User password")
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str = Field(..., min_length=10, description="Opaque refresh token string")
+
+
+class LogoutRequest(BaseModel):
+    refresh_token: Optional[str] = Field(None, description="Optional refresh token to revoke immediately")
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr = Field(..., description="User email address requesting password reset")
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(..., min_length=10, description="Password reset verification token")
+    new_password: str = Field(..., min_length=8, max_length=128, description="New strong password")
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., min_length=1, max_length=128, description="Current plaintext password")
+    new_password: str = Field(..., min_length=8, max_length=128, description="New strong password")
+
+
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr = Field(..., description="User email address to resend verification email")
+
+
+class MessageResponse(BaseModel):
+    message: str = Field(..., description="Human-readable status or confirmation message")
+
+
 class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    expires_in: int
-    user: UserRead
+    access_token: str = Field(..., description="Signed JWT Bearer access token")
+    refresh_token: Optional[str] = Field(None, description="Secure refresh token")
+    token_type: str = Field(default="bearer", description="Token scheme (bearer)")
+    expires_in: int = Field(..., description="Token lifespan in seconds")
+    user: UserRead = Field(..., description="Current user information")
 
 
 class TokenPayload(BaseModel):
@@ -90,3 +145,8 @@ class TokenPayload(BaseModel):
     client_id: str
     role: str
     exp: int
+
+
+class CurrentUserResponse(UserRead):
+    client: Optional[ClientRead] = None
+    model_config = ConfigDict(from_attributes=True)
