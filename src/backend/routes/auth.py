@@ -6,7 +6,7 @@
 # from fastapi import APIRouter, Depends, Request, status
 # from sqlalchemy.ext.asyncio import AsyncSession
 
-# from backend.api.deps import get_current_user_claims, get_current_user_db, get_db
+# from backend.core.deps import get_current_user_claims, get_current_user_db, get_db
 # from backend.core.rate_limit import DistributedRateLimiter
 # from backend.models.client import UserModel
 # from backend.schemas.client import (
