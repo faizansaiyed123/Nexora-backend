@@ -28,7 +28,7 @@ from backend.services.auth_service import AuthService
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
-@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     request: Request,
     data: RegisterRequest,
@@ -39,7 +39,7 @@ async def register(
 
     await DistributedRateLimiter.check_rate_limit("register", client_ip, max_requests=10, window_seconds=3600)
 
-    user, access_token, refresh_token, expires_in = await AuthService.register_tenant(
+    user = await AuthService.register_tenant(
         session=db,
         data=data,
         ip_address=client_ip,
@@ -47,12 +47,24 @@ async def register(
     )
     await db.commit()
 
-    return TokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        token_type="bearer",
-        expires_in=expires_in,
-        user=UserRead.model_validate(user),
+    return MessageResponse(
+        message="Registration successful. Email verification required. Please check your inbox to verify your account."
+    )
+
+@router.get("/verify-email", response_model=MessageResponse)
+async def verify_email(
+    token: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    await AuthService.verify_email(
+        session=db,
+        token=token,
+    )
+
+    await db.commit()
+
+    return MessageResponse(
+        message="Email address successfully verified. You can now log in."
     )
 
 
