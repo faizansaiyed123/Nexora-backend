@@ -3,9 +3,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from backend.db.session import get_db
-from backend.models.competitor import OfferingMatchModel
+from backend.models.competitor import (
+    OfferingMatchModel,
+    SourceModel,
+)
 from backend.models.observation import (
     JobModel,
     ObservationModel,
@@ -35,20 +39,33 @@ async def run_collection(
     Collect the current state of an offering match.
 
     Flow:
-    1. Validate offering match.
+    1. Validate offering match and load related models.
     2. Create a RUNNING job.
     3. Fetch the target URL.
     4. Create an observation.
     5. Create/update the snapshot.
-    6. Mark the job COMPLETED or FAILED.
+    6. Calculate competitive comparison.
+    7. Mark the job COMPLETED or FAILED.
+    8. Return detailed competitive intelligence.
     """
 
     # ---------------------------------------------------------
-    # 1. Find offering match
+    # 1. Find offering match with related models
     # ---------------------------------------------------------
 
     result = await session.execute(
-        select(OfferingMatchModel).where(
+        select(OfferingMatchModel)
+        .options(
+            selectinload(
+                OfferingMatchModel.offering
+            ),
+            selectinload(
+                OfferingMatchModel.source
+            ).selectinload(
+                SourceModel.competitor
+            ),
+        )
+        .where(
             OfferingMatchModel.id == offering_match_id,
             OfferingMatchModel.is_active.is_(True),
         )
@@ -66,6 +83,15 @@ async def run_collection(
     target_url_val = offering_match.target_url
     source_id_val = offering_match.source_id
 
+    offering = offering_match.offering
+    source = offering_match.source
+
+    competitor = (
+        source.competitor
+        if source
+        else None
+    )
+
     # ---------------------------------------------------------
     # 2. Create collection job
     # ---------------------------------------------------------
@@ -75,8 +101,15 @@ async def run_collection(
         job_type=JobTypeEnum.ON_DEMAND_REFRESH,
         status=JobStatusEnum.RUNNING,
         meta_info={
-            "offering_match_id": str(offering_match_id_val),
+            "offering_match_id": str(
+                offering_match_id_val
+            ),
             "target_url": target_url_val,
+            "offering_id": (
+                str(offering.id)
+                if offering
+                else None
+            ),
         },
     )
 
@@ -118,16 +151,25 @@ async def run_collection(
             offering_match_id=offering_match_id_val,
             job_id=job.id,
             observed_price=collection_result.price,
-            currency=collection_result.currency or "USD",
+            currency=(
+                collection_result.currency
+                or "USD"
+            ),
             availability=availability,
-            response_time_ms=collection_result.response_time_ms,
-            http_status_code=collection_result.status_code or 0,
+            response_time_ms=(
+                collection_result.response_time_ms
+            ),
+            http_status_code=(
+                collection_result.status_code
+                or 0
+            ),
             raw_payload=None,
-            extracted_attributes=collection_result.attributes,
+            extracted_attributes=(
+                collection_result.attributes or {}
+            ),
         )
 
         session.add(observation)
-
         await session.flush()
 
         # -----------------------------------------------------
@@ -144,10 +186,13 @@ async def run_collection(
         snapshot = snapshot_result.scalar_one_or_none()
 
         # -----------------------------------------------------
-        # 7. Create first snapshot
+        # 7. Create or update snapshot
         # -----------------------------------------------------
 
+        price_movement = "FIRST_OBSERVATION"
+
         if snapshot is None:
+
             snapshot = SnapshotModel(
                 offering_match_id=offering_match_id_val,
                 current_price=collection_result.price,
@@ -160,11 +205,8 @@ async def run_collection(
 
             session.add(snapshot)
 
-        # -----------------------------------------------------
-        # 8. Update existing snapshot
-        # -----------------------------------------------------
-
         else:
+
             previous_price = snapshot.current_price
             current_price = collection_result.price
 
@@ -175,29 +217,99 @@ async def run_collection(
                 previous_price is not None
                 and current_price is not None
             ):
-                difference = current_price - previous_price
+                difference = (
+                    current_price - previous_price
+                )
 
                 snapshot.price_difference = difference
 
                 if previous_price != 0:
                     snapshot.percentage_difference = float(
-                        (difference / previous_price) * 100
+                        (
+                            difference / previous_price
+                        ) * 100
                     )
                 else:
                     snapshot.percentage_difference = None
 
+                if difference > 0:
+                    price_movement = "INCREASE"
+                elif difference < 0:
+                    price_movement = "DECREASE"
+                else:
+                    price_movement = "UNCHANGED"
+
             else:
                 snapshot.price_difference = None
                 snapshot.percentage_difference = None
+                price_movement = "FIRST_OBSERVATION"
 
             snapshot.current_availability = availability
             snapshot.last_observed_at = observation.observed_at
+
+        # -----------------------------------------------------
+        # 8. Competitive comparison
+        #
+        # Client price = offerings.base_price
+        # Competitor price = collected price
+        # -----------------------------------------------------
+
+        client_price_info = None
+
+        if (
+            offering
+            and offering.base_price is not None
+            and collection_result.price is not None
+        ):
+            client_price = float(
+                offering.base_price
+            )
+
+            competitor_price = float(
+                collection_result.price
+            )
+
+            price_difference = (
+                competitor_price - client_price
+            )
+
+            percentage_difference = (
+                (price_difference / client_price) * 100
+                if client_price > 0
+                else 0.0
+            )
+
+            if price_difference < 0:
+                position = "COMPETITOR_CHEAPER"
+
+            elif price_difference > 0:
+                position = "COMPETITOR_MORE_EXPENSIVE"
+
+            else:
+                position = "EQUAL"
+
+            client_price_info = {
+                "client_price": (
+                    f"{client_price:.2f}"
+                ),
+                "client_currency": (
+                    offering.currency
+                ),
+                "price_difference": (
+                    f"{price_difference:+.2f}"
+                ),
+                "percentage_difference": (
+                    f"{percentage_difference:+.2f}%"
+                ),
+                "position": position,
+            }
 
         # -----------------------------------------------------
         # 9. Update job
         # -----------------------------------------------------
 
         if collection_result.success:
+
             job.status = JobStatusEnum.COMPLETED
             job.total_items_processed = 1
             job.successful_items = 1
@@ -206,26 +318,29 @@ async def run_collection(
             job.error_message = None
 
         else:
+
             job.status = JobStatusEnum.FAILED
             job.total_items_processed = 1
             job.successful_items = 0
             job.failed_items = 1
             job.error_message = (
-                collection_result.error or "Collection failed."
+                collection_result.error
+                or "Collection failed."
             )
 
         # -----------------------------------------------------
-        # 10. Commit everything
+        # 10. Commit
         # -----------------------------------------------------
 
         await session.commit()
         await session.refresh(job)
 
         # -----------------------------------------------------
-        # 11. Return result
+        # 11. Handle collection failure
         # -----------------------------------------------------
 
         if not collection_result.success:
+
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail={
@@ -235,21 +350,131 @@ async def run_collection(
                 },
             )
 
+        # -----------------------------------------------------
+        # 12. Return detailed response
+        # -----------------------------------------------------
+
         return {
             "job_id": str(job.id),
-            "offering_match_id": str(offering_match_id_val),
+
+            "offering_match_id": str(
+                offering_match_id_val
+            ),
+
+            "target_url": target_url_val,
+
             "source_id": str(job.source_id),
-            "status": job.status,
-            "message": "Collection completed successfully.",
-            "price": (
-                str(collection_result.price)
-                if collection_result.price is not None
+
+            "source_name": (
+                source.name
+                if source
                 else None
             ),
-            "currency": collection_result.currency,
-            "availability": availability.value,
-            "response_time_ms": collection_result.response_time_ms,
-            "http_status_code": collection_result.status_code,
+
+            "competitor_id": (
+                str(competitor.id)
+                if competitor
+                else None
+            ),
+
+            "competitor_name": (
+                competitor.name
+                if competitor
+                else None
+            ),
+
+            "offering_id": (
+                str(offering.id)
+                if offering
+                else None
+            ),
+
+            "offering_name": (
+                offering.name
+                if offering
+                else None
+            ),
+
+            "status": job.status,
+
+            "message": (
+                "Collection completed successfully."
+            ),
+
+            "observation": {
+                "price": (
+                    f"{float(collection_result.price):.2f}"
+                    if collection_result.price is not None
+                    else None
+                ),
+
+                "currency": (
+                    collection_result.currency
+                ),
+
+                "availability": (
+                    availability.value
+                ),
+
+                "response_time_ms": (
+                    collection_result.response_time_ms
+                ),
+
+                "http_status_code": (
+                    collection_result.status_code
+                ),
+
+                "confidence": (
+                    "HIGH"
+                    if collection_result.price is not None
+                    else "LOW"
+                ),
+
+                "extraction_status": (
+                    collection_result.extraction_status
+                ),
+
+                "extracted_attributes": (
+                    collection_result.attributes
+                    or {}
+                ),
+
+                "observed_at": (
+                    observation.observed_at.isoformat()
+                    if observation.observed_at
+                    else None
+                ),
+            },
+
+            "snapshot": {
+                "current_price": (
+                    f"{float(snapshot.current_price):.2f}"
+                    if snapshot.current_price is not None
+                    else None
+                ),
+
+                "previous_price": (
+                    f"{float(snapshot.previous_price):.2f}"
+                    if snapshot.previous_price is not None
+                    else None
+                ),
+
+                "price_difference": (
+                    f"{float(snapshot.price_difference):+.2f}"
+                    if snapshot.price_difference is not None
+                    else None
+                ),
+
+                "percentage_difference": (
+                    f"{snapshot.percentage_difference:+.2f}%"
+                    if snapshot.percentage_difference is not None
+                    else None
+                ),
+
+                "price_movement": price_movement,
+            },
+
+            "competitive_comparison": client_price_info,
         }
 
     # ---------------------------------------------------------
@@ -260,10 +485,9 @@ async def run_collection(
         raise
 
     except Exception as exc:
+
         await session.rollback()
 
-        # Create a fresh failed job record because rollback
-        # removes the uncommitted RUNNING job.
         failed_job = JobModel(
             source_id=source_id_val,
             job_type=JobTypeEnum.ON_DEMAND_REFRESH,
@@ -273,7 +497,9 @@ async def run_collection(
             failed_items=1,
             error_message=str(exc),
             meta_info={
-                "offering_match_id": str(offering_match_id_val),
+                "offering_match_id": str(
+                    offering_match_id_val
+                ),
                 "target_url": target_url_val,
             },
         )
