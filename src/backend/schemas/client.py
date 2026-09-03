@@ -5,7 +5,7 @@ Pydantic schemas for Multi-Tenant Clients, Users, and Authentication DTOs.
 import re
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from pydantic import (
     BaseModel,
@@ -318,3 +318,135 @@ class CurrentUserResponse(UserRead):
     client: Optional[ClientRead] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ClientProfileUpdate(BaseModel):
+    name: Optional[str] = Field(
+        None,
+        min_length=2,
+        max_length=255,
+        description="Tenant organization display name",
+        examples=["Acme Retail Global"],
+    )
+
+    company_name: Optional[str] = Field(
+        None,
+        max_length=255,
+        description="Official registered company name",
+        examples=["Acme Retail Corporation"],
+    )
+
+    country: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="Country of operation",
+        examples=["United States"],
+    )
+
+    timezone: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="Primary IANA timezone string",
+        examples=["America/New_York"],
+    )
+
+    default_currency: Optional[str] = Field(
+        None,
+        min_length=3,
+        max_length=10,
+        description="Default 3-letter currency code (ISO 4217)",
+        examples=["USD"],
+    )
+
+    default_market: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="Primary target market region",
+        examples=["US"],
+    )
+
+    industry: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="Industry or vertical",
+        examples=["Retail & E-commerce"],
+    )
+
+    account_preferences: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Custom account-level preferences and configuration flags",
+        examples=[
+            {
+                "theme": "dark",
+                "email_notifications": True,
+                "weekly_digest": True,
+                "price_alert_threshold": 5.0,
+            }
+        ],
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "name": "Acme Retail Global",
+                    "company_name": "Acme Retail Corporation",
+                    "country": "United States",
+                    "timezone": "America/New_York",
+                    "default_currency": "USD",
+                    "default_market": "US",
+                    "industry": "Retail & E-commerce",
+                    "account_preferences": {
+                        "theme": "dark",
+                        "email_notifications": True,
+                        "weekly_digest": True,
+                        "price_alert_threshold": 5.0,
+                    },
+                }
+            ]
+        }
+    )
+
+
+class ClientProfileRead(BaseModel):
+    id: uuid.UUID
+    name: str
+    slug: str
+    company_name: Optional[str] = None
+    country: Optional[str] = None
+    timezone: Optional[str] = None
+    default_currency: Optional[str] = None
+    default_market: Optional[str] = None
+    industry: Optional[str] = None
+    account_preferences: Optional[Dict[str, Any]] = None
+    status: ClientStatusEnum
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
+            "examples": [
+                {
+                    "id": "123e4567-e89b-12d3-a456-426614174000",
+                    "name": "Acme Retail Global",
+                    "slug": "acme-retail-global",
+                    "company_name": "Acme Retail Corporation",
+                    "country": "United States",
+                    "timezone": "America/New_York",
+                    "default_currency": "USD",
+                    "default_market": "US",
+                    "industry": "Retail & E-commerce",
+                    "account_preferences": {
+                        "theme": "dark",
+                        "email_notifications": True,
+                        "weekly_digest": True,
+                        "price_alert_threshold": 5.0,
+                    },
+                    "status": "active",
+                    "created_at": "2026-09-01T12:00:00Z",
+                    "updated_at": "2026-09-03T18:30:00Z",
+                }
+            ]
+        },
+    )
