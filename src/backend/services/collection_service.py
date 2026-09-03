@@ -13,13 +13,19 @@ class CollectionResult:
         attributes: Dict[str, Any],
         response_time_ms: int,
         http_status_code: int,
+        currency: str = "USD",
+        success: bool = True,
+        error: str | None = None,
         raw_payload: str | None = None,
     ):
         self.price = price
+        self.currency = currency
         self.availability = availability
         self.attributes = attributes
         self.response_time_ms = response_time_ms
         self.http_status_code = http_status_code
+        self.success = success
+        self.error = error
         self.raw_payload = raw_payload
 
 
@@ -46,25 +52,36 @@ class CollectionService:
 
         soup = BeautifulSoup(html, "html.parser")
 
-        price = self._extract_price(soup)
+        price, currency = self._extract_price(soup)
         availability = self._extract_availability(soup)
 
         return CollectionResult(
             price=price,
+            currency=currency or "USD",
             availability=availability,
             attributes={},
             response_time_ms=response_time_ms,
             http_status_code=response.status_code,
+            success=True,
+            error=None,
             raw_payload=html,
         )
 
-    def _extract_price(self, soup: BeautifulSoup) -> Decimal | None:
+    def _extract_price(self, soup: BeautifulSoup) -> tuple[Decimal | None, str]:
         selectors = [
             '[itemprop="price"]',
             '[data-price]',
             ".price",
             "#price",
         ]
+
+        # Currency detection from meta tag or currency symbol
+        currency = "USD"
+        curr_elem = soup.select_one('[itemprop="priceCurrency"]')
+        if curr_elem:
+            curr_val = curr_elem.get("content") or curr_elem.get_text(strip=True)
+            if curr_val:
+                currency = curr_val.strip().upper()
 
         for selector in selectors:
             element = soup.select_one(selector)
@@ -81,18 +98,28 @@ class CollectionService:
             if not value:
                 continue
 
+            if "€" in value:
+                currency = "EUR"
+            elif "£" in value:
+                currency = "GBP"
+            elif "₹" in value:
+                currency = "INR"
+
             cleaned = (
                 value.replace("$", "")
+                .replace("€", "")
+                .replace("£", "")
+                .replace("₹", "")
                 .replace(",", "")
                 .strip()
             )
 
             try:
-                return Decimal(cleaned)
+                return Decimal(cleaned), currency
             except Exception:
                 continue
 
-        return None
+        return None, currency
 
     def _extract_availability(self, soup: BeautifulSoup) -> str:
         text = soup.get_text(" ", strip=True).lower()
