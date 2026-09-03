@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 from urllib.parse import urljoin
@@ -11,53 +12,63 @@ import httpx
 from bs4 import BeautifulSoup
 
 
+@dataclass
 class CollectionResult:
     """
     Result returned by the generic collection service.
 
-    The service only performs HTTP collection and extraction.
-    It does not know anything about a particular source, website,
-    product, marketplace, or industry.
+    HTTP success and extraction success are intentionally separate.
+    A URL can return HTTP 200/202 while still producing no useful data.
     """
 
-    def __init__(
-        self,
-        price: Decimal | None,
-        availability: str | None,
-        attributes: dict[str, Any],
-        response_time_ms: int,
-        http_status_code: int | None,
-        currency: str | None = None,
-        success: bool = True,
-        error: str | None = None,
-        raw_payload: str | None = None,
-        url: str | None = None,
-    ):
-        self.price = price
-        self.currency = currency
-        self.availability = availability
-        self.attributes = attributes
-        self.response_time_ms = response_time_ms
-        self.http_status_code = http_status_code
-        self.success = success
-        self.error = error
-        self.raw_payload = raw_payload
-        self.url = url
+    success: bool
+    url: str
+    status_code: Optional[int]
+    response_time_ms: int
+
+    price: Optional[Decimal]
+    currency: Optional[str]
+    availability: Optional[str]
+
+    attributes: dict[str, Any]
+
+    raw_payload: Optional[str] = None
+    content_type: Optional[str] = None
+    content_length: Optional[int] = None
+
+    extraction_status: str = "NO_DATA"
+    error: Optional[str] = None
+
+    @property
+    def http_status_code(self) -> Optional[int]:
+        return self.status_code
 
 
 class CollectionService:
     """
-    Generic HTTP collection service.
+    Generic, industry-independent HTTP collection service.
 
-    Responsibilities:
-    - Fetch a dynamic target URL
-    - Follow redirects
-    - Measure request duration
-    - Preserve the raw response
-    - Extract structured information
-    - Normalize common price/currency/availability values
+    Pipeline:
 
-    This service contains NO website-specific logic.
+        URL
+          ↓
+        HTTP request
+          ↓
+        response inspection
+          ↓
+        JSON / JSON-LD
+          ↓
+        meta / OpenGraph
+          ↓
+        embedded structured data
+          ↓
+        generic HTML selectors
+          ↓
+        generic text detection
+          ↓
+        CollectionResult
+
+    No website-specific selectors or hardcoded website names are used.
     """
 
     DEFAULT_TIMEOUT = 30.0
@@ -70,20 +81,23 @@ class CollectionService:
         ),
         "Accept": (
             "text/html,application/xhtml+xml,"
-            "application/xml;q=0.9,image/avif,image/webp,"
-            "*/*;q=0.8"
+            "application/xml;q=0.9,"
+            "application/json;q=0.8,"
+            "*/*;q=0.7"
         ),
         "Accept-Language": "en-US,en;q=0.9",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
     }
 
     async def collect(
         self,
-        target_url: str,
+        url: str,
         timeout: float = DEFAULT_TIMEOUT,
         headers: Optional[dict[str, str]] = None,
     ) -> CollectionResult:
         """
-        Fetch and extract information from a dynamic URL.
+        Fetch a URL and perform generic extraction.
         """
 
         request_headers = self.DEFAULT_HEADERS.copy()
@@ -97,169 +111,357 @@ class CollectionService:
             async with httpx.AsyncClient(
                 timeout=timeout,
                 follow_redirects=True,
-                headers=request_headers,
             ) as client:
 
-                response = await client.get(target_url)
-
-                response_time_ms = int(
-                    (time.perf_counter() - start_time) * 1000
+                response = await client.get(
+                    url,
+                    headers=request_headers,
                 )
 
-                final_url = str(response.url)
+            response_time_ms = int(
+                (time.perf_counter() - start_time) * 1000
+            )
 
-                raw_payload = response.text
+            final_url = str(response.url)
+            content_type = response.headers.get(
+                "content-type"
+            )
 
-                # -------------------------------------------------
-                # HTTP failure
-                # -------------------------------------------------
+            raw_payload = response.text
 
-                if response.status_code >= 400:
-                    return CollectionResult(
-                        price=None,
-                        currency=None,
-                        availability=None,
-                        attributes={},
-                        response_time_ms=response_time_ms,
-                        http_status_code=response.status_code,
-                        success=False,
-                        error=f"HTTP {response.status_code}",
-                        raw_payload=raw_payload,
-                        url=final_url,
-                    )
+            content_length = len(
+                response.content
+            )
 
-                # -------------------------------------------------
-                # Determine response type
-                # -------------------------------------------------
+            # -------------------------------------------------
+            # HTTP error
+            # -------------------------------------------------
 
-                content_type = (
-                    response.headers.get(
-                        "content-type",
-                        "",
-                    )
-                    .lower()
+            if response.status_code >= 400:
+                return CollectionResult(
+                    success=False,
+                    url=final_url,
+                    status_code=response.status_code,
+                    response_time_ms=response_time_ms,
+                    price=None,
+                    currency=None,
+                    availability=None,
+                    attributes={
+                        "http_status": response.status_code,
+                        "content_type": content_type,
+                        "content_length": content_length,
+                    },
+                    raw_payload=raw_payload,
+                    content_type=content_type,
+                    content_length=content_length,
+                    extraction_status="HTTP_ERROR",
+                    error=f"HTTP {response.status_code}",
                 )
 
-                # -------------------------------------------------
-                # JSON response
-                # -------------------------------------------------
+            # -------------------------------------------------
+            # JSON response
+            # -------------------------------------------------
 
-                if (
-                    "application/json" in content_type
-                    or "application/ld+json" in content_type
-                ):
-                    extracted = self._extract_from_json(
-                        raw_payload
-                    )
+            if self._is_json_content(content_type, raw_payload):
 
-                # -------------------------------------------------
-                # HTML response
-                # -------------------------------------------------
+                extracted = self._extract_json(
+                    raw_payload
+                )
 
-                else:
-                    soup = BeautifulSoup(
-                        raw_payload,
-                        "html.parser",
-                    )
-
-                    extracted = self._extract(
-                        soup=soup,
-                        base_url=final_url,
-                    )
+                extraction_status = self._determine_extraction_status(
+                    extracted
+                )
 
                 return CollectionResult(
+                    success=True,
+                    url=final_url,
+                    status_code=response.status_code,
+                    response_time_ms=response_time_ms,
                     price=extracted["price"],
                     currency=extracted["currency"],
                     availability=extracted["availability"],
-                    attributes=extracted["attributes"],
-                    response_time_ms=response_time_ms,
-                    http_status_code=response.status_code,
-                    success=True,
-                    error=None,
+                    attributes={
+                        **extracted["attributes"],
+                        "http_status": response.status_code,
+                        "content_type": content_type,
+                        "content_length": content_length,
+                    },
                     raw_payload=raw_payload,
-                    url=final_url,
+                    content_type=content_type,
+                    content_length=content_length,
+                    extraction_status=extraction_status,
                 )
 
+            # -------------------------------------------------
+            # HTML response
+            # -------------------------------------------------
+
+            soup = BeautifulSoup(
+                raw_payload,
+                "html.parser",
+            )
+
+            extracted = self._extract_html(
+                soup=soup,
+                html=raw_payload,
+                base_url=final_url,
+            )
+
+            extraction_status = self._determine_extraction_status(
+                extracted
+            )
+
+            attributes = {
+                **extracted["attributes"],
+                "http_status": response.status_code,
+                "content_type": content_type,
+                "content_length": content_length,
+            }
+
+            # Useful diagnostic information.
+            title = soup.find("title")
+
+            if title:
+                attributes["page_title"] = title.get_text(
+                    " ",
+                    strip=True,
+                )
+
+            # -------------------------------------------------
+            # HTTP 202 diagnostics
+            # -------------------------------------------------
+
+            if response.status_code == 202:
+                attributes["http_202"] = True
+
+                if not raw_payload.strip():
+                    attributes["empty_response"] = True
+
+                if self._looks_like_dynamic_page(
+                    soup,
+                    raw_payload,
+                ):
+                    attributes["possible_dynamic_rendering"] = True
+
+                if self._looks_like_challenge(
+                    soup,
+                    raw_payload,
+                ):
+                    attributes["possible_challenge"] = True
+
+            return CollectionResult(
+                success=True,
+                url=final_url,
+                status_code=response.status_code,
+                response_time_ms=response_time_ms,
+                price=extracted["price"],
+                currency=extracted["currency"],
+                availability=extracted["availability"],
+                attributes=attributes,
+                raw_payload=raw_payload,
+                content_type=content_type,
+                content_length=content_length,
+                extraction_status=extraction_status,
+            )
+
         except httpx.TimeoutException:
+
             response_time_ms = int(
                 (time.perf_counter() - start_time) * 1000
             )
 
             return CollectionResult(
+                success=False,
+                url=url,
+                status_code=None,
+                response_time_ms=response_time_ms,
                 price=None,
                 currency=None,
                 availability=None,
                 attributes={},
-                response_time_ms=response_time_ms,
-                http_status_code=None,
-                success=False,
-                error="Request timeout",
                 raw_payload=None,
-                url=target_url,
+                content_type=None,
+                content_length=None,
+                extraction_status="TIMEOUT",
+                error="Request timeout",
             )
 
         except httpx.HTTPError as exc:
+
             response_time_ms = int(
                 (time.perf_counter() - start_time) * 1000
             )
 
             return CollectionResult(
+                success=False,
+                url=url,
+                status_code=None,
+                response_time_ms=response_time_ms,
                 price=None,
                 currency=None,
                 availability=None,
                 attributes={},
-                response_time_ms=response_time_ms,
-                http_status_code=None,
-                success=False,
-                error=str(exc),
                 raw_payload=None,
-                url=target_url,
+                content_type=None,
+                content_length=None,
+                extraction_status="HTTP_ERROR",
+                error=str(exc),
             )
 
         except Exception as exc:
+
             response_time_ms = int(
                 (time.perf_counter() - start_time) * 1000
             )
 
             return CollectionResult(
+                success=False,
+                url=url,
+                status_code=None,
+                response_time_ms=response_time_ms,
                 price=None,
                 currency=None,
                 availability=None,
                 attributes={},
-                response_time_ms=response_time_ms,
-                http_status_code=None,
-                success=False,
-                error=str(exc),
                 raw_payload=None,
-                url=target_url,
+                content_type=None,
+                content_length=None,
+                extraction_status="ERROR",
+                error=str(exc),
             )
 
-    # =============================================================
+    # =========================================================
     # HTML EXTRACTION
-    # =============================================================
+    # =========================================================
 
-    def _extract(
+    def _extract_html(
         self,
         soup: BeautifulSoup,
+        html: str,
         base_url: str,
     ) -> dict[str, Any]:
-        """
-        Generic HTML extraction.
 
-        Priority:
-
-        1. JSON-LD structured data
-        2. Schema.org HTML attributes
-        3. OpenGraph/meta data
-        4. Generic HTML attributes
-        5. Text-based fallback
-        """
+        price: Optional[Decimal] = None
+        currency: Optional[str] = None
+        availability: Optional[str] = None
 
         attributes: dict[str, Any] = {}
 
-        # ---------------------------------------------------------
-        # Basic page information
-        # ---------------------------------------------------------
+        # -----------------------------------------------------
+        # 1. JSON-LD
+        # -----------------------------------------------------
+
+        jsonld_data = self._extract_jsonld(
+            soup
+        )
+
+        if jsonld_data:
+
+            jsonld_result = self._extract_from_structured_data(
+                jsonld_data
+            )
+
+            price = jsonld_result["price"]
+            currency = jsonld_result["currency"]
+            availability = jsonld_result["availability"]
+
+            attributes.update(
+                jsonld_result["attributes"]
+            )
+
+        # -----------------------------------------------------
+        # 2. Meta / OpenGraph
+        # -----------------------------------------------------
+
+        meta_result = self._extract_from_meta(
+            soup
+        )
+
+        if price is None:
+            price = meta_result["price"]
+
+        if currency is None:
+            currency = meta_result["currency"]
+
+        if availability is None:
+            availability = meta_result["availability"]
+
+        attributes.update(
+            meta_result["attributes"]
+        )
+
+        # -----------------------------------------------------
+        # 3. Embedded JSON
+        # -----------------------------------------------------
+
+        embedded_result = self._extract_embedded_json(
+            soup
+        )
+
+        if price is None:
+            price = embedded_result["price"]
+
+        if currency is None:
+            currency = embedded_result["currency"]
+
+        if availability is None:
+            availability = embedded_result["availability"]
+
+        attributes.update(
+            embedded_result["attributes"]
+        )
+
+        # -----------------------------------------------------
+        # 4. Generic HTML selectors
+        # -----------------------------------------------------
+
+        html_result = self._extract_from_html_selectors(
+            soup
+        )
+
+        if price is None:
+            price = html_result["price"]
+
+        if currency is None:
+            currency = html_result["currency"]
+
+        if availability is None:
+            availability = html_result["availability"]
+
+        attributes.update(
+            html_result["attributes"]
+        )
+
+        # -----------------------------------------------------
+        # 5. Generic page text
+        # -----------------------------------------------------
+
+        text = soup.get_text(
+            " ",
+            strip=True,
+        )
+
+        if currency is None:
+            currency = self._detect_currency_from_text(
+                text
+            )
+
+        if availability is None:
+            availability = self._detect_availability_from_text(
+                text
+            )
+
+        # Price from text is intentionally last because
+        # arbitrary numbers are dangerous to interpret as prices.
+        if price is None:
+            price = self._detect_price_from_text(
+                text,
+                currency,
+            )
+
+        # -----------------------------------------------------
+        # Page metadata
+        # -----------------------------------------------------
 
         title = soup.find("title")
 
@@ -286,87 +488,18 @@ class CollectionService:
 
         canonical = soup.find(
             "link",
-            attrs={"rel": "canonical"},
+            attrs={
+                "rel": re.compile(
+                    r"canonical",
+                    re.I,
+                )
+            },
         )
 
         if canonical and canonical.get("href"):
             attributes["canonical_url"] = urljoin(
                 base_url,
                 canonical["href"],
-            )
-
-        # ---------------------------------------------------------
-        # JSON-LD
-        # ---------------------------------------------------------
-
-        json_ld_data = self._extract_json_ld(soup)
-
-        if json_ld_data:
-            attributes["structured_data"] = json_ld_data
-
-        price = self._extract_price_from_json_ld(
-            json_ld_data
-        )
-
-        currency = self._extract_currency_from_json_ld(
-            json_ld_data
-        )
-
-        availability = (
-            self._extract_availability_from_json_ld(
-                json_ld_data
-            )
-        )
-
-        # ---------------------------------------------------------
-        # Schema.org HTML
-        # ---------------------------------------------------------
-
-        if price is None:
-            price = self._extract_schema_price(soup)
-
-        if currency is None:
-            currency = self._extract_schema_currency(
-                soup
-            )
-
-        if availability is None:
-            availability = self._extract_schema_availability(
-                soup
-            )
-
-        # ---------------------------------------------------------
-        # Meta/OpenGraph
-        # ---------------------------------------------------------
-
-        if price is None:
-            price = self._extract_meta_price(soup)
-
-        if currency is None:
-            currency = self._extract_meta_currency(
-                soup
-            )
-
-        if availability is None:
-            availability = self._extract_meta_availability(
-                soup
-            )
-
-        # ---------------------------------------------------------
-        # Generic HTML
-        # ---------------------------------------------------------
-
-        if price is None:
-            price = self._extract_generic_price(soup)
-
-        if currency is None:
-            currency = self._extract_generic_currency(
-                soup
-            )
-
-        if availability is None:
-            availability = self._extract_generic_availability(
-                soup
             )
 
         return {
@@ -376,22 +509,35 @@ class CollectionService:
             "attributes": attributes,
         }
 
-    # =============================================================
-    # JSON-LD
-    # =============================================================
+    # =========================================================
+    # JSON EXTRACTION
+    # =========================================================
 
-    def _extract_json_ld(
+    def _extract_json(
+        self,
+        raw_payload: str,
+    ) -> dict[str, Any]:
+
+        try:
+            data = json.loads(raw_payload)
+        except (json.JSONDecodeError, TypeError):
+            return {
+                "price": None,
+                "currency": None,
+                "availability": None,
+                "attributes": {},
+            }
+
+        return self._extract_from_structured_data(
+            data
+        )
+
+    def _extract_jsonld(
         self,
         soup: BeautifulSoup,
-    ) -> list[Any]:
-        """
-        Extract all valid JSON-LD blocks.
+    ) -> Any:
 
-        This is intentionally generic and does not assume
-        a specific schema type.
-        """
-
-        results: list[Any] = []
+        objects: list[Any] = []
 
         scripts = soup.find_all(
             "script",
@@ -404,366 +550,392 @@ class CollectionService:
         )
 
         for script in scripts:
-            if not script.string:
+
+            raw = script.string or script.get_text()
+
+            if not raw:
                 continue
 
-            raw = script.string.strip()
+            raw = raw.strip()
+
+            try:
+                objects.append(
+                    json.loads(raw)
+                )
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+        if not objects:
+            return None
+
+        return objects
+
+    def _extract_from_structured_data(
+        self,
+        data: Any,
+    ) -> dict[str, Any]:
+
+        price: Optional[Decimal] = None
+        currency: Optional[str] = None
+        availability: Optional[str] = None
+
+        attributes: dict[str, Any] = {}
+
+        for obj in self._walk_json(data):
+
+            if not isinstance(obj, dict):
+                continue
+
+            # -------------------------------------------------
+            # Price
+            # -------------------------------------------------
+
+            if price is None:
+
+                for key in (
+                    "price",
+                    "lowPrice",
+                    "highPrice",
+                    "amount",
+                    "value",
+                ):
+
+                    if key not in obj:
+                        continue
+
+                    candidate = self._parse_price(
+                        obj.get(key)
+                    )
+
+                    if candidate is not None:
+                        price = candidate
+                        break
+
+            # -------------------------------------------------
+            # Currency
+            # -------------------------------------------------
+
+            if currency is None:
+
+                for key in (
+                    "priceCurrency",
+                    "currency",
+                    "currencyCode",
+                ):
+
+                    value = obj.get(key)
+
+                    detected = self._normalize_currency(
+                        value
+                    )
+
+                    if detected:
+                        currency = detected
+                        break
+
+            # -------------------------------------------------
+            # Availability
+            # -------------------------------------------------
+
+            if availability is None:
+
+                for key in (
+                    "availability",
+                    "availabilityStatus",
+                    "stock",
+                    "stockStatus",
+                ):
+
+                    value = obj.get(key)
+
+                    detected = self._normalize_availability(
+                        value
+                    )
+
+                    if detected:
+                        availability = detected
+                        break
+
+            # -------------------------------------------------
+            # Useful generic fields
+            # -------------------------------------------------
+
+            for key in (
+                "name",
+                "brand",
+                "sku",
+                "mpn",
+                "model",
+                "description",
+            ):
+
+                value = obj.get(key)
+
+                if isinstance(value, (str, int, float)):
+                    attributes.setdefault(
+                        key,
+                        value,
+                    )
+
+        return {
+            "price": price,
+            "currency": currency,
+            "availability": availability,
+            "attributes": attributes,
+        }
+
+    # =========================================================
+    # META / OPENGRAPH
+    # =========================================================
+
+    def _extract_from_meta(
+        self,
+        soup: BeautifulSoup,
+    ) -> dict[str, Any]:
+
+        price: Optional[Decimal] = None
+        currency: Optional[str] = None
+        availability: Optional[str] = None
+
+        attributes: dict[str, Any] = {}
+
+        meta_fields = {
+            "price": [
+                "product:price:amount",
+                "og:price:amount",
+                "price",
+                "product-price",
+            ],
+            "currency": [
+                "product:price:currency",
+                "og:price:currency",
+                "priceCurrency",
+                "currency",
+            ],
+            "availability": [
+                "product:availability",
+                "availability",
+                "stock",
+            ],
+        }
+
+        for field, names in meta_fields.items():
+
+            for name in names:
+
+                element = soup.find(
+                    "meta",
+                    attrs={
+                        "property": name
+                    },
+                )
+
+                if not element:
+                    element = soup.find(
+                        "meta",
+                        attrs={
+                            "name": name
+                        },
+                    )
+
+                if not element:
+                    continue
+
+                value = element.get(
+                    "content"
+                )
+
+                if not value:
+                    continue
+
+                if field == "price" and price is None:
+                    price = self._parse_price(
+                        value
+                    )
+
+                elif (
+                    field == "currency"
+                    and currency is None
+                ):
+                    currency = self._normalize_currency(
+                        value
+                    )
+
+                elif (
+                    field == "availability"
+                    and availability is None
+                ):
+                    availability = self._normalize_availability(
+                        value
+                    )
+
+        return {
+            "price": price,
+            "currency": currency,
+            "availability": availability,
+            "attributes": attributes,
+        }
+
+    # =========================================================
+    # EMBEDDED JSON
+    # =========================================================
+
+    def _extract_embedded_json(
+        self,
+        soup: BeautifulSoup,
+    ) -> dict[str, Any]:
+
+        result = {
+            "price": None,
+            "currency": None,
+            "availability": None,
+            "attributes": {},
+        }
+
+        scripts = soup.find_all(
+            "script"
+        )
+
+        for script in scripts:
+
+            script_type = (
+                script.get("type") or ""
+            ).lower()
+
+            if "json" not in script_type:
+                continue
+
+            raw = script.string or script.get_text()
 
             if not raw:
                 continue
 
             try:
-                parsed = json.loads(raw)
-
-                if isinstance(parsed, list):
-                    results.extend(parsed)
-                else:
-                    results.append(parsed)
-
-            except (json.JSONDecodeError, TypeError):
-                continue
-
-        return results
-
-    def _extract_price_from_json_ld(
-        self,
-        data: list[Any],
-    ) -> Decimal | None:
-
-        for item in self._walk_json(data):
-
-            if not isinstance(item, dict):
-                continue
-
-            # Direct price
-            if "price" in item:
-                price = self._parse_price(
-                    item.get("price")
+                data = json.loads(
+                    raw.strip()
                 )
-
-                if price is not None:
-                    return price
-
-            # Offers
-            offers = item.get("offers")
-
-            if offers:
-                if isinstance(offers, dict):
-                    offers = [offers]
-
-                if isinstance(offers, list):
-                    for offer in offers:
-                        if not isinstance(offer, dict):
-                            continue
-
-                        price = self._parse_price(
-                            offer.get("price")
-                        )
-
-                        if price is not None:
-                            return price
-
-        return None
-
-    def _extract_currency_from_json_ld(
-        self,
-        data: list[Any],
-    ) -> str | None:
-
-        for item in self._walk_json(data):
-
-            if not isinstance(item, dict):
+            except (
+                json.JSONDecodeError,
+                TypeError,
+            ):
                 continue
 
-            currency = self._normalize_currency(
-                item.get("priceCurrency")
+            extracted = self._extract_from_structured_data(
+                data
             )
 
-            if currency:
-                return currency
+            if result["price"] is None:
+                result["price"] = extracted["price"]
 
-            offers = item.get("offers")
+            if result["currency"] is None:
+                result["currency"] = extracted[
+                    "currency"
+                ]
 
-            if isinstance(offers, dict):
-                currency = self._normalize_currency(
-                    offers.get("priceCurrency")
-                )
+            if result["availability"] is None:
+                result["availability"] = extracted[
+                    "availability"
+                ]
 
-                if currency:
-                    return currency
-
-            if isinstance(offers, list):
-                for offer in offers:
-                    if not isinstance(offer, dict):
-                        continue
-
-                    currency = self._normalize_currency(
-                        offer.get("priceCurrency")
-                    )
-
-                    if currency:
-                        return currency
-
-        return None
-
-    def _extract_availability_from_json_ld(
-        self,
-        data: list[Any],
-    ) -> str | None:
-
-        for item in self._walk_json(data):
-
-            if not isinstance(item, dict):
-                continue
-
-            availability = self._normalize_availability(
-                item.get("availability")
+            result["attributes"].update(
+                extracted["attributes"]
             )
 
-            if availability:
-                return availability
+        return result
 
-            offers = item.get("offers")
+    # =========================================================
+    # GENERIC HTML
+    # =========================================================
 
-            if isinstance(offers, dict):
-                availability = (
-                    self._normalize_availability(
-                        offers.get("availability")
-                    )
-                )
-
-                if availability:
-                    return availability
-
-            if isinstance(offers, list):
-                for offer in offers:
-                    if not isinstance(offer, dict):
-                        continue
-
-                    availability = (
-                        self._normalize_availability(
-                            offer.get("availability")
-                        )
-                    )
-
-                    if availability:
-                        return availability
-
-        return None
-
-    def _walk_json(
-        self,
-        value: Any,
-    ):
-        """
-        Recursively walk arbitrary JSON structures.
-        """
-
-        if isinstance(value, dict):
-            yield value
-
-            for child in value.values():
-                yield from self._walk_json(child)
-
-        elif isinstance(value, list):
-            for child in value:
-                yield from self._walk_json(child)
-
-    # =============================================================
-    # SCHEMA.ORG HTML
-    # =============================================================
-
-    def _extract_schema_price(
+    def _extract_from_html_selectors(
         self,
         soup: BeautifulSoup,
-    ) -> Decimal | None:
+    ) -> dict[str, Any]:
 
-        selectors = [
+        price: Optional[Decimal] = None
+        currency: Optional[str] = None
+        availability: Optional[str] = None
+
+        attributes: dict[str, Any] = {}
+
+        price_selectors = [
             '[itemprop="price"]',
+            '[data-price]',
+            '[data-product-price]',
+            '[data-sale-price]',
+            '[data-current-price]',
+            '[class*="price"]',
+            '[id*="price"]',
         ]
 
-        for selector in selectors:
-            for element in soup.select(selector):
+        for selector in price_selectors:
+
+            for element in soup.select(
+                selector
+            ):
 
                 value = (
                     element.get("content")
-                    or element.get("value")
+                    or element.get("data-price")
+                    or element.get(
+                        "data-product-price"
+                    )
+                    or element.get(
+                        "data-sale-price"
+                    )
+                    or element.get(
+                        "data-current-price"
+                    )
                     or element.get_text(
                         " ",
                         strip=True,
                     )
                 )
 
-                price = self._parse_price(value)
+                candidate = self._parse_price(
+                    value
+                )
 
-                if price is not None:
-                    return price
+                if candidate is not None:
+                    price = candidate
+                    break
 
-        return None
+            if price is not None:
+                break
 
-    def _extract_schema_currency(
-        self,
-        soup: BeautifulSoup,
-    ) -> str | None:
-
-        element = soup.select_one(
+        currency_element = soup.select_one(
             '[itemprop="priceCurrency"]'
         )
 
-        if not element:
-            return None
+        if currency_element:
 
-        value = (
-            element.get("content")
-            or element.get_text(
-                " ",
-                strip=True,
-            )
-        )
-
-        return self._normalize_currency(value)
-
-    def _extract_schema_availability(
-        self,
-        soup: BeautifulSoup,
-    ) -> str | None:
-
-        element = soup.select_one(
-            '[itemprop="availability"]'
-        )
-
-        if not element:
-            return None
-
-        value = (
-            element.get("href")
-            or element.get("content")
-            or element.get_text(
-                " ",
-                strip=True,
-            )
-        )
-
-        return self._normalize_availability(value)
-
-    # =============================================================
-    # META
-    # =============================================================
-
-    def _extract_meta_price(
-        self,
-        soup: BeautifulSoup,
-    ) -> Decimal | None:
-
-        selectors = [
-            'meta[property="product:price:amount"]',
-            'meta[property="og:price:amount"]',
-            'meta[name="price"]',
-            'meta[name="product:price"]',
-        ]
-
-        for selector in selectors:
-            element = soup.select_one(selector)
-
-            if not element:
-                continue
-
-            price = self._parse_price(
-                element.get("content")
-            )
-
-            if price is not None:
-                return price
-
-        return None
-
-    def _extract_meta_currency(
-        self,
-        soup: BeautifulSoup,
-    ) -> str | None:
-
-        selectors = [
-            'meta[property="product:price:currency"]',
-            'meta[property="og:price:currency"]',
-            'meta[name="currency"]',
-        ]
-
-        for selector in selectors:
-            element = soup.select_one(selector)
-
-            if not element:
-                continue
-
-            currency = self._normalize_currency(
-                element.get("content")
-            )
-
-            if currency:
-                return currency
-
-        return None
-
-    def _extract_meta_availability(
-        self,
-        soup: BeautifulSoup,
-    ) -> str | None:
-
-        selectors = [
-            'meta[property="product:availability"]',
-            'meta[property="og:availability"]',
-            'meta[name="availability"]',
-        ]
-
-        for selector in selectors:
-            element = soup.select_one(selector)
-
-            if not element:
-                continue
-
-            availability = (
-                self._normalize_availability(
-                    element.get("content")
+            value = (
+                currency_element.get("content")
+                or currency_element.get_text(
+                    strip=True
                 )
             )
 
-            if availability:
-                return availability
+            currency = self._normalize_currency(
+                value
+            )
 
-        return None
-
-    # =============================================================
-    # GENERIC HTML
-    # =============================================================
-
-    def _extract_generic_price(
-        self,
-        soup: BeautifulSoup,
-    ) -> Decimal | None:
-
-        selectors = [
-            "[data-price]",
-            "[data-product-price]",
-            "[data-current-price]",
-            "[data-sale-price]",
-            '[class*="price"]',
-            '[id*="price"]',
+        availability_selectors = [
+            '[itemprop="availability"]',
+            '[class*="availability"]',
+            '[id*="availability"]',
+            '[class*="stock"]',
+            '[id*="stock"]',
         ]
 
-        for selector in selectors:
+        for selector in availability_selectors:
 
-            for element in soup.select(selector):
+            for element in soup.select(
+                selector
+            ):
 
                 value = (
-                    element.get("data-price")
-                    or element.get(
-                        "data-product-price"
-                    )
-                    or element.get(
-                        "data-current-price"
-                    )
-                    or element.get(
-                        "data-sale-price"
-                    )
+                    element.get("href")
                     or element.get("content")
                     or element.get_text(
                         " ",
@@ -771,98 +943,194 @@ class CollectionService:
                     )
                 )
 
-                price = self._parse_price(value)
-
-                if price is not None:
-                    return price
-
-        return None
-
-    def _extract_generic_currency(
-        self,
-        soup: BeautifulSoup,
-    ) -> str | None:
-
-        # Look at common attributes first.
-        selectors = [
-            "[data-currency]",
-            "[data-price-currency]",
-        ]
-
-        for selector in selectors:
-
-            for element in soup.select(selector):
-
-                value = (
-                    element.get("data-currency")
-                    or element.get(
-                        "data-price-currency"
-                    )
-                )
-
-                currency = self._normalize_currency(
+                detected = self._normalize_availability(
                     value
                 )
 
-                if currency:
-                    return currency
+                if detected:
+                    availability = detected
+                    break
 
-        # Then inspect page text for currency symbols.
-        text = soup.get_text(
-            " ",
-            strip=True,
-        )
+            if availability:
+                break
 
-        return self._currency_from_text(text)
+        return {
+            "price": price,
+            "currency": currency,
+            "availability": availability,
+            "attributes": attributes,
+        }
 
-    def _extract_generic_availability(
-        self,
-        soup: BeautifulSoup,
-    ) -> str | None:
+    # =========================================================
+    # TEXT DETECTION
+    # =========================================================
 
-        selectors = [
-            "[data-availability]",
-            "[data-stock]",
-            '[class*="availability"]',
-            '[id*="availability"]',
-            '[class*="stock"]',
-            '[id*="stock"]',
+    @staticmethod
+    def _detect_currency_from_text(
+        text: str,
+    ) -> Optional[str]:
+
+        patterns = [
+            (r"\bUSD\b", "USD"),
+            (r"\bEUR\b", "EUR"),
+            (r"\bGBP\b", "GBP"),
+            (r"\bINR\b", "INR"),
+            (r"\bJPY\b", "JPY"),
+            (r"\bCAD\b", "CAD"),
+            (r"\bAUD\b", "AUD"),
+            (r"\bCHF\b", "CHF"),
+            (r"\bCNY\b", "CNY"),
+            (r"\bSGD\b", "SGD"),
+            (r"\$", "USD"),
+            (r"€", "EUR"),
+            (r"£", "GBP"),
+            (r"₹", "INR"),
+            (r"¥", "JPY"),
         ]
 
-        for selector in selectors:
+        for pattern, currency in patterns:
 
-            for element in soup.select(selector):
-
-                value = (
-                    element.get(
-                        "data-availability"
-                    )
-                    or element.get("data-stock")
-                    or element.get_text(
-                        " ",
-                        strip=True,
-                    )
-                )
-
-                availability = (
-                    self._normalize_availability(
-                        value
-                    )
-                )
-
-                if availability:
-                    return availability
+            if re.search(
+                pattern,
+                text,
+                re.IGNORECASE,
+            ):
+                return currency
 
         return None
 
-    # =============================================================
+    @staticmethod
+    def _detect_availability_from_text(
+        text: str,
+    ) -> Optional[str]:
+
+        normalized = text.lower()
+
+        states = [
+            (
+                [
+                    "discontinued",
+                    "no longer available",
+                ],
+                "DISCONTINUED",
+            ),
+            (
+                [
+                    "backorder",
+                    "back order",
+                    "back-ordered",
+                ],
+                "BACKORDER",
+            ),
+            (
+                [
+                    "preorder",
+                    "pre-order",
+                    "pre order",
+                ],
+                "PREORDER",
+            ),
+            (
+                [
+                    "out of stock",
+                    "out-of-stock",
+                    "outofstock",
+                    "sold out",
+                    "currently unavailable",
+                ],
+                "OUT_OF_STOCK",
+            ),
+            (
+                [
+                    "in stock",
+                    "in-stock",
+                    "instock",
+                ],
+                "IN_STOCK",
+            ),
+        ]
+
+        for phrases, state in states:
+
+            if any(
+                phrase in normalized
+                for phrase in phrases
+            ):
+                return state
+
+        return None
+
+    @staticmethod
+    def _detect_price_from_text(
+        text: str,
+        currency: Optional[str],
+    ) -> Optional[Decimal]:
+
+        if not currency:
+            return None
+
+        patterns: list[str] = []
+
+        if currency == "USD":
+            patterns = [
+                r"\$\s*\d[\d,]*(?:\.\d{1,4})?",
+                r"\bUSD\s*\d[\d,]*(?:\.\d{1,4})?",
+            ]
+
+        elif currency == "EUR":
+            patterns = [
+                r"€\s*\d[\d.,]*",
+                r"\bEUR\s*\d[\d.,]*",
+            ]
+
+        elif currency == "GBP":
+            patterns = [
+                r"£\s*\d[\d,]*(?:\.\d{1,4})?",
+                r"\bGBP\s*\d[\d,]*(?:\.\d{1,4})?",
+            ]
+
+        elif currency == "INR":
+            patterns = [
+                r"₹\s*\d[\d,]*(?:\.\d{1,4})?",
+                r"\bINR\s*\d[\d,]*(?:\.\d{1,4})?",
+            ]
+
+        elif currency == "JPY":
+            patterns = [
+                r"¥\s*\d[\d,]*",
+                r"\bJPY\s*\d[\d,]*",
+            ]
+
+        for pattern in patterns:
+
+            match = re.search(
+                pattern,
+                text,
+                re.IGNORECASE,
+            )
+
+            if not match:
+                continue
+
+            value = match.group(0)
+
+            parsed = CollectionService._parse_price(
+                value
+            )
+
+            if parsed is not None:
+                return parsed
+
+        return None
+
+    # =========================================================
     # NORMALIZATION
-    # =============================================================
+    # =========================================================
 
     @staticmethod
     def _normalize_currency(
         value: Any,
-    ) -> str | None:
+    ) -> Optional[str]:
 
         if value is None:
             return None
@@ -872,65 +1140,31 @@ class CollectionService:
         if not text:
             return None
 
-        if re.fullmatch(
-            r"[A-Za-z]{3}",
-            text,
-        ):
-            return text.upper()
-
-        currency_map = {
+        symbol_map = {
             "$": "USD",
-            "US$": "USD",
-            "USD": "USD",
             "€": "EUR",
-            "EUR": "EUR",
             "£": "GBP",
-            "GBP": "GBP",
             "₹": "INR",
-            "INR": "INR",
             "¥": "JPY",
-            "JPY": "JPY",
-            "CNY": "CNY",
-            "CAD": "CAD",
-            "AUD": "AUD",
         }
 
-        return currency_map.get(
-            text.upper()
+        if text in symbol_map:
+            return symbol_map[text]
+
+        match = re.search(
+            r"\b[A-Za-z]{3}\b",
+            text,
         )
 
-    @staticmethod
-    def _currency_from_text(
-        text: str,
-    ) -> str | None:
-
-        currency_patterns = [
-            (r"\bUSD\b", "USD"),
-            (r"\bEUR\b", "EUR"),
-            (r"\bGBP\b", "GBP"),
-            (r"\bINR\b", "INR"),
-            (r"\bJPY\b", "JPY"),
-            (r"\bCNY\b", "CNY"),
-            (r"\bCAD\b", "CAD"),
-            (r"\bAUD\b", "AUD"),
-            (r"\$", "USD"),
-            ("€", "EUR"),
-            ("£", "GBP"),
-            ("₹", "INR"),
-            ("¥", "JPY"),
-        ]
-
-        for pattern, currency in currency_patterns:
-
-            if re.search(pattern, text):
-                return currency
+        if match:
+            return match.group(0).upper()
 
         return None
 
     @staticmethod
     def _normalize_availability(
         value: Any,
-    ) -> str | None:
+    ) -> Optional[str]:
 
         if value is None:
             return None
@@ -939,8 +1173,6 @@ class CollectionService:
 
         if not text:
             return None
-
-        # Most specific states first.
 
         if (
             "discontinued" in text
@@ -951,7 +1183,7 @@ class CollectionService:
         if (
             "backorder" in text
             or "back order" in text
-            or "back-order" in text
+            or "back-ordered" in text
         ):
             return "BACKORDER"
 
@@ -965,28 +1197,26 @@ class CollectionService:
         if (
             "outofstock" in text
             or "out of stock" in text
+            or "out-of-stock" in text
             or "sold out" in text
-            or "currently unavailable" in text
+            or "unavailable" in text
         ):
             return "OUT_OF_STOCK"
 
         if (
             "instock" in text
             or "in stock" in text
-            or "available" in text
+            or "in-stock" in text
+            or text == "available"
         ):
             return "IN_STOCK"
 
         return None
 
-    # =============================================================
-    # PRICE PARSING
-    # =============================================================
-
     @staticmethod
     def _parse_price(
         value: Any,
-    ) -> Decimal | None:
+    ) -> Optional[Decimal]:
 
         if value is None:
             return None
@@ -996,9 +1226,10 @@ class CollectionService:
         if not text:
             return None
 
-        # Remove currency symbols and text.
+        # Remove currency names/symbols while preserving
+        # digits, comma, period and minus.
         text = re.sub(
-            r"[^\d.,]",
+            r"[^\d,.\-]",
             "",
             text,
         )
@@ -1006,50 +1237,203 @@ class CollectionService:
         if not text:
             return None
 
-        # ---------------------------------------------------------
-        # Both comma and period.
-        #
-        # 1,299.99 -> 1299.99
-        # 1.299,99 -> 1299.99
-        # ---------------------------------------------------------
+        # Reject multiple minus signs / invalid negatives.
+        if text.count("-") > 1:
+            return None
 
+        if "-" in text and not text.startswith("-"):
+            text = text.replace("-", "")
+
+        # International formats:
+        #
+        # 399.99
+        # 399,99
+        # 1,299.99
+        # 1.299,99
+        #
         if "," in text and "." in text:
 
             if text.rfind(",") > text.rfind("."):
+
+                # 1.299,99
                 text = text.replace(".", "")
                 text = text.replace(",", ".")
 
             else:
-                text = text.replace(",", "")
 
-        # ---------------------------------------------------------
-        # Only comma.
-        # ---------------------------------------------------------
+                # 1,299.99
+                text = text.replace(",", "")
 
         elif "," in text:
 
             parts = text.split(",")
 
-            if len(parts[-1]) == 2:
+            if len(parts) == 2 and len(parts[-1]) in (
+                1,
+                2,
+            ):
+                # 399,99
                 text = (
-                    "".join(parts[:-1])
+                    parts[0]
                     + "."
-                    + parts[-1]
+                    + parts[1]
                 )
             else:
+                # 1,299
                 text = text.replace(",", "")
 
-        # ---------------------------------------------------------
-        # Only period.
-        # ---------------------------------------------------------
-
         try:
+
             price = Decimal(text)
+
+            if price < 0:
+                return None
+
+            return price
 
         except InvalidOperation:
             return None
 
-        if price < 0:
-            return None
+    # =========================================================
+    # HELPERS
+    # =========================================================
 
-        return price
+    @staticmethod
+    def _walk_json(
+        value: Any,
+    ):
+        """
+        Recursively walk arbitrary JSON-like structures.
+        """
+
+        yield value
+
+        if isinstance(value, dict):
+
+            for child in value.values():
+                yield from CollectionService._walk_json(
+                    child
+                )
+
+        elif isinstance(value, list):
+
+            for child in value:
+                yield from CollectionService._walk_json(
+                    child
+                )
+
+    @staticmethod
+    def _is_json_content(
+        content_type: Optional[str],
+        body: str,
+    ) -> bool:
+
+        if content_type:
+            if "application/json" in content_type.lower():
+                return True
+
+            if "+json" in content_type.lower():
+                return True
+
+        stripped = body.lstrip()
+
+        return stripped.startswith(
+            "{"
+        ) or stripped.startswith(
+            "["
+        )
+
+    @staticmethod
+    def _determine_extraction_status(
+        extracted: dict[str, Any],
+    ) -> str:
+
+        price = extracted.get("price")
+        currency = extracted.get("currency")
+        availability = extracted.get("availability")
+
+        if (
+            price is not None
+            and currency is not None
+            and availability is not None
+        ):
+            return "COMPLETE"
+
+        if (
+            price is not None
+            or currency is not None
+            or availability is not None
+        ):
+            return "PARTIAL"
+
+        return "NO_DATA"
+
+    @staticmethod
+    def _looks_like_dynamic_page(
+        soup: BeautifulSoup,
+        html: str,
+    ) -> bool:
+
+        text = soup.get_text(
+            " ",
+            strip=True,
+        ).lower()
+
+        dynamic_phrases = [
+            "enable javascript",
+            "javascript is required",
+            "loading...",
+            "loading",
+            "please wait",
+            "rendering",
+        ]
+
+        if any(
+            phrase in text
+            for phrase in dynamic_phrases
+        ):
+            return True
+
+        scripts = soup.find_all(
+            "script"
+        )
+
+        if len(scripts) > 20 and len(
+            soup.get_text(
+                " ",
+                strip=True
+            )
+        ) < 500:
+            return True
+
+        return False
+
+    @staticmethod
+    def _looks_like_challenge(
+        soup: BeautifulSoup,
+        html: str,
+    ) -> bool:
+
+        text = (
+            soup.get_text(
+                " ",
+                strip=True,
+            )
+            .lower()
+        )
+
+        challenge_phrases = [
+            "verify you are human",
+            "checking your browser",
+            "security check",
+            "access denied",
+            "unusual traffic",
+            "captcha",
+            "robot check",
+            "bot detection",
+        ]
+
+        return any(
+            phrase in text
+            for phrase in challenge_phrases
+        )
