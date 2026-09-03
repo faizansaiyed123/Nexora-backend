@@ -3,14 +3,16 @@ Authentication & Multi-Tenant Account REST API endpoints.
 """
 
 from typing import Annotated
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.deps import get_current_user_db, get_db
 from backend.core.rate_limit import DistributedRateLimiter
-from backend.models.client import UserModel
+from backend.models.client import ClientModel, UserModel
 from backend.schemas.client import (
     ChangePasswordRequest,
+    ClientProfileRead,
+    ClientProfileUpdate,
     CurrentUserResponse,
     ForgotPasswordRequest,
     LoginRequest,
@@ -201,3 +203,70 @@ async def get_current_user_profile(
     current_user: Annotated[UserModel, Depends(get_current_user_db)],
 ):
     return current_user
+
+
+@router.get(
+    "/profile",
+    response_model=ClientProfileRead,
+)
+async def get_client_profile(
+    current_user: Annotated[
+        UserModel,
+        Depends(get_current_user_db),
+    ],
+    db: Annotated[
+        AsyncSession,
+        Depends(get_db),
+    ],
+):
+    client = await db.get(
+        ClientModel,
+        current_user.client_id,
+    )
+
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Client profile not found.",
+        )
+
+    return client
+
+
+@router.patch(
+    "/profile",
+    response_model=ClientProfileRead,
+)
+async def update_client_profile(
+    data: ClientProfileUpdate,
+    current_user: Annotated[
+        UserModel,
+        Depends(get_current_user_db),
+    ],
+    db: Annotated[
+        AsyncSession,
+        Depends(get_db),
+    ],
+):
+    client = await db.get(
+        ClientModel,
+        current_user.client_id,
+    )
+
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Client profile not found.",
+        )
+
+    update_data = data.model_dump(
+        exclude_unset=True
+    )
+
+    for field, value in update_data.items():
+        setattr(client, field, value)
+
+    await db.commit()
+    await db.refresh(client)
+
+    return client
