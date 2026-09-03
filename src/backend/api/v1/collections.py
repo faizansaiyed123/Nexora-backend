@@ -118,7 +118,7 @@ async def run_collection(
             offering_match_id=offering_match_id_val,
             job_id=job.id,
             observed_price=collection_result.price,
-            currency=collection_result.currency or "USD",
+            currency=collection_result.currency,
             availability=availability,
             response_time_ms=collection_result.response_time_ms,
             http_status_code=collection_result.http_status_code or 0,
