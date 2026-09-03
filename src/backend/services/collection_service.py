@@ -581,85 +581,59 @@ class CollectionService:
 
         attributes: dict[str, Any] = {}
 
+        # First pass: Look for Offer or Product schemas specifically
         for obj in self._walk_json(data):
-
             if not isinstance(obj, dict):
                 continue
 
-            # -------------------------------------------------
-            # Price
-            # -------------------------------------------------
+            obj_type = str(obj.get("@type", "")).lower()
 
+            # Prefer explicit Offer or Product objects for price
             if price is None:
+                for key in ("price", "lowPrice", "highPrice"):
+                    if key in obj:
+                        candidate = self._parse_price(obj.get(key))
+                        if candidate is not None and candidate > 0:
+                            price = candidate
+                            break
 
-                for key in (
-                    "price",
-                    "lowPrice",
-                    "highPrice",
-                    "amount",
-                    "value",
-                ):
+                # If object is explicitly an Offer or PriceSpecification, amount/value is allowed
+                if price is None and any(t in obj_type for t in ("offer", "pricespecification", "product")):
+                    for key in ("amount", "value"):
+                        if key in obj:
+                            candidate = self._parse_price(obj.get(key))
+                            if candidate is not None and candidate > 0:
+                                price = candidate
+                                break
 
-                    if key not in obj:
-                        continue
-
-                    candidate = self._parse_price(
-                        obj.get(key)
-                    )
-
-                    if candidate is not None:
-                        price = candidate
-                        break
-
-            # -------------------------------------------------
             # Currency
-            # -------------------------------------------------
-
             if currency is None:
-
                 for key in (
                     "priceCurrency",
                     "currency",
                     "currencyCode",
                 ):
-
                     value = obj.get(key)
-
-                    detected = self._normalize_currency(
-                        value
-                    )
-
+                    detected = self._normalize_currency(value)
                     if detected:
                         currency = detected
                         break
 
-            # -------------------------------------------------
             # Availability
-            # -------------------------------------------------
-
             if availability is None:
-
                 for key in (
                     "availability",
                     "availabilityStatus",
                     "stock",
                     "stockStatus",
                 ):
-
                     value = obj.get(key)
-
-                    detected = self._normalize_availability(
-                        value
-                    )
-
+                    detected = self._normalize_availability(value)
                     if detected:
                         availability = detected
                         break
 
-            # -------------------------------------------------
             # Useful generic fields
-            # -------------------------------------------------
-
             for key in (
                 "name",
                 "brand",
@@ -668,14 +642,9 @@ class CollectionService:
                 "model",
                 "description",
             ):
-
                 value = obj.get(key)
-
                 if isinstance(value, (str, int, float)):
-                    attributes.setdefault(
-                        key,
-                        value,
-                    )
+                    attributes.setdefault(key, value)
 
         return {
             "price": price,
@@ -1146,10 +1115,21 @@ class CollectionService:
             "£": "GBP",
             "₹": "INR",
             "¥": "JPY",
+            "C$": "CAD",
+            "A$": "AUD",
+            "CA$": "CAD",
+            "AU$": "AUD",
         }
 
         if text in symbol_map:
             return symbol_map[text]
+
+        # Valid ISO 4217 currency codes whitelist
+        iso_currencies = {
+            "USD", "EUR", "GBP", "INR", "JPY", "CAD", "AUD", "CHF",
+            "CNY", "SGD", "NZD", "AED", "SAR", "SEK", "NOK", "DKK",
+            "HKD", "KRW", "BRL", "MXN", "ZAR", "TRY", "RUB", "PLN", "THB"
+        }
 
         match = re.search(
             r"\b[A-Za-z]{3}\b",
@@ -1157,7 +1137,9 @@ class CollectionService:
         )
 
         if match:
-            return match.group(0).upper()
+            code = match.group(0).upper()
+            if code in iso_currencies:
+                return code
 
         return None
 
