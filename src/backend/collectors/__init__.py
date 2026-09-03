@@ -1,8 +1,13 @@
-from backend.collectors.base import BaseCollector, CollectionResult
+from backend.collectors.base import (
+    BaseCollector,
+    CollectionRequest,
+    CollectionResponse,
+)
 from backend.collectors.http import HTTPCollector
 
 __all__ = [
     "BaseCollector",
-    "CollectionResult",
+    "CollectionRequest",
+    "CollectionResponse",
     "HTTPCollector",
 ]
