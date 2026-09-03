@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-
+from backend.api.v1.jobs import router as jobs_router
 from backend.api.v1.auth import router as auth_router
 from backend.api.v1.health import router as health_router
 from backend.api.v1.competitors import router as competitors_router
@@ -48,4 +48,10 @@ api_router.include_router(
     collections_router,
     prefix="/collections",
     tags=["Collections"],
+)
+
+api_router.include_router(
+    jobs_router,
+    prefix="/jobs",
+    tags=["Jobs"],
 )
