@@ -118,10 +118,10 @@ async def run_collection(
             offering_match_id=offering_match_id_val,
             job_id=job.id,
             observed_price=collection_result.price,
-            currency=collection_result.currency,
+            currency=collection_result.currency or "USD",
             availability=availability,
             response_time_ms=collection_result.response_time_ms,
-            http_status_code=collection_result.http_status_code or 0,
+            http_status_code=collection_result.status_code or 0,
             raw_payload=None,
             extracted_attributes=collection_result.attributes,
         )
@@ -249,7 +249,7 @@ async def run_collection(
             "currency": collection_result.currency,
             "availability": availability.value,
             "response_time_ms": collection_result.response_time_ms,
-            "http_status_code": collection_result.http_status_code,
+            "http_status_code": collection_result.status_code,
         }
 
     # ---------------------------------------------------------
