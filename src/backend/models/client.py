@@ -4,10 +4,10 @@ Client and User models supporting multi-tenant isolation and role-based access.
 
 import uuid
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.db.base import Base
@@ -39,6 +39,34 @@ class ClientModel(Base):
         Integer, default=10, nullable=False)
     max_tracked_offerings: Mapped[int] = mapped_column(
         Integer, default=500, nullable=False)
+    company_name: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+    country: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+    timezone: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+    default_currency: Mapped[Optional[str]] = mapped_column(
+        String(10),
+        nullable=True,
+    )
+    default_market: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+    industry: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+    account_preferences: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+        JSONB,
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
