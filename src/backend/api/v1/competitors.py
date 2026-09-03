@@ -15,7 +15,7 @@ from backend.schemas.competitor import (
     CompetitorUpdate,
 )
 from backend.services.competitor_service import CompetitorService
-from backend.api.dependencies import (
+from backend.core.deps import (
     AuthenticatedUserContext,
     get_current_user_claims,
     require_admin,
