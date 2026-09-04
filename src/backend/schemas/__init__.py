@@ -9,6 +9,11 @@ from backend.schemas.alert import (
     AlertRuleUpdate,
 )
 from backend.schemas.audit import AuditLogRead
+from backend.schemas.discovery import (
+    DiscoveredItemSummary,
+    DiscoveryJobResponse,
+    DiscoveryRunRequest,
+)
 from backend.schemas.client import (
     ChangePasswordRequest,
     ClientCreate,
@@ -129,6 +134,10 @@ __all__ = [
     "SnapshotRead",
     "PriceHistoryPoint",
     "PriceTrendResponse",
+    # Discovery
+    "DiscoveryRunRequest",
+    "DiscoveryJobResponse",
+    "DiscoveredItemSummary",
     # Alerts & Audit
     "AlertRuleCreate",
     "AlertRuleUpdate",
