@@ -45,15 +45,25 @@ class CompetitorRead(CompetitorBase):
 
 
 class SourceConfigurationBase(BaseModel):
-    rate_limit_rpm: int = Field(default=30, ge=1, le=600)
-    request_delay_seconds: float = Field(default=2.0, ge=0.0, le=60.0)
-    timeout_seconds: int = Field(default=30, ge=5, le=120)
-    max_retries: int = Field(default=3, ge=0, le=10)
-    user_agent_strategy: str = Field(default="ROTATE_CHROME", max_length=50)
-    requires_proxy: bool = False
-    requires_javascript: bool = False
-    custom_headers: Dict[str, Any] = Field(default_factory=dict)
-    extraction_selectors: Dict[str, Any] = Field(default_factory=dict)
+    rate_limit_rpm: int = Field(default=30, ge=1, le=600, description="Requests per minute rate limit", examples=[30])
+    request_delay_seconds: float = Field(default=2.0, ge=0.0, le=60.0, description="Delay between requests in seconds", examples=[1.5])
+    timeout_seconds: int = Field(default=30, ge=5, le=120, description="HTTP connection timeout", examples=[30])
+    max_retries: int = Field(default=3, ge=0, le=10, description="Maximum retry count on transient failure", examples=[3])
+    user_agent_strategy: str = Field(default="ROTATE_CHROME", max_length=50, description="User agent rotation strategy", examples=["ROTATE_CHROME"])
+    requires_proxy: bool = Field(default=False, description="Whether requests must route through proxy pool", examples=[False])
+    requires_javascript: bool = Field(default=False, description="Whether headless browser JS rendering is required", examples=[False])
+    custom_headers: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Custom HTTP headers to send with requests",
+        examples=[{"Accept-Language": "en-US,en;q=0.9", "User-Agent": "Mozilla/5.0"}],
+        json_schema_extra={"example": {"Accept-Language": "en-US,en;q=0.9"}},
+    )
+    extraction_selectors: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Default CSS/XPath scraping selectors",
+        examples=[{"price_selector": ".product-price", "title_selector": "h1"}],
+        json_schema_extra={"example": {"price_selector": ".product-price", "title_selector": "h1"}},
+    )
 
 
 class SourceConfigurationCreate(SourceConfigurationBase):
@@ -68,8 +78,16 @@ class SourceConfigurationUpdate(BaseModel):
     user_agent_strategy: Optional[str] = Field(None, max_length=50)
     requires_proxy: Optional[bool] = None
     requires_javascript: Optional[bool] = None
-    custom_headers: Optional[Dict[str, Any]] = None
-    extraction_selectors: Optional[Dict[str, Any]] = None
+    custom_headers: Optional[Dict[str, Any]] = Field(
+        None,
+        examples=[{"Accept-Language": "en-US,en;q=0.9"}],
+        json_schema_extra={"example": {"Accept-Language": "en-US,en;q=0.9"}},
+    )
+    extraction_selectors: Optional[Dict[str, Any]] = Field(
+        None,
+        examples=[{"price_selector": ".product-price"}],
+        json_schema_extra={"example": {"price_selector": ".product-price"}},
+    )
 
 
 class SourceConfigurationRead(SourceConfigurationBase):
