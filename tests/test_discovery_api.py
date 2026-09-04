@@ -29,6 +29,7 @@ from backend.models.enums import (
     RoleEnum,
 )
 from backend.models.offering import DynamicFieldDefinitionModel, OfferingModel
+from backend.schemas.discovery import GeminiDiscoveryResult
 
 
 @pytest_asyncio.fixture
@@ -171,6 +172,21 @@ SAMPLE_PRODUCT_2_HTML = """
 </html>
 """
 
+SAMPLE_CATEGORY_HTML = """
+<!DOCTYPE html>
+<html><head><title>FOOTWEAR-ADIDAS</title></head><body>
+  <h1>FOOTWEAR-ADIDAS</h1>
+  <article><a href="/catalog/first-shoe">First shoe</a><span>$120.00 CAD</span></article>
+  <article><a href="/catalog/second-shoe">Second shoe</a><span>$140.00 CAD</span></article>
+</body></html>
+"""
+
+SAMPLE_OEMBED_LINKING_PAGE = """
+<html><head><title>Category</title></head><body>
+  <a href="/collections/shoes.oembed">Embed representation</a>
+</body></html>
+"""
+
 
 @pytest.mark.asyncio
 async def test_website_discovery_success_flow(setup_discovery_tenants):
@@ -244,6 +260,123 @@ async def test_website_discovery_success_flow(setup_discovery_tenants):
         names = [o.name for o in offerings]
         assert any("Nexora Pro Gaming Headphone" in n for n in names)
         assert any("Nexora Smartwatch X" in n for n in names)
+
+
+@pytest.mark.asyncio
+async def test_listing_page_creates_its_product_pages_not_the_listing(setup_discovery_tenants):
+    """A category title and card prices must never become a fake offering."""
+    data = setup_discovery_tenants
+    transport = ASGITransport(app=app)
+
+    def mock_get(url, *args, **kwargs):
+        response = AsyncMock()
+        response.status_code = 200
+        response.headers = {"content-type": "text/html"}
+        url = str(url)
+        if url.endswith("/collections/shoes"):
+            response.text = SAMPLE_CATEGORY_HTML
+        elif url.endswith("/catalog/first-shoe"):
+            response.text = SAMPLE_PRODUCT_1_HTML
+        elif url.endswith("/catalog/second-shoe"):
+            response.text = SAMPLE_PRODUCT_2_HTML
+        else:
+            response.text = "<html><body>not a product</body></html>"
+        return response
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        with patch("httpx.AsyncClient.get", side_effect=mock_get):
+            response = await client.post(
+                "/v1/discovery/run",
+                headers={"Authorization": f"Bearer {data['token_a']}"},
+                json={"website_url": "https://client-store.com/collections/shoes", "max_pages": 3},
+            )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["total_pages_crawled"] == 3
+    assert body["created_offerings_count"] == 2
+    assert {item["name"] for item in body["items"]} == {
+        "Nexora Pro Gaming Headphone", "Nexora Smartwatch X"
+    }
+    assert all(item["name"] != "FOOTWEAR-ADIDAS" for item in body["items"])
+
+
+@pytest.mark.asyncio
+async def test_gemini_listing_classification_prioritizes_real_product_pages(setup_discovery_tenants):
+    """AI supplies structured link intelligence; persistence still uses product pages."""
+    data = setup_discovery_tenants
+    transport = ASGITransport(app=app)
+
+    def mock_get(url, *args, **kwargs):
+        response = AsyncMock(status_code=200, headers={"content-type": "text/html"})
+        response.text = (
+            '<html><title>Catalog</title><a href="/unusual-item">View</a></html>'
+            if str(url).endswith("/catalog") else SAMPLE_PRODUCT_1_HTML
+        )
+        return response
+
+    ai_result = GeminiDiscoveryResult(page_type="PRODUCT_LISTING", product_urls=["https://client-store.com/unusual-item"])
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        with patch("httpx.AsyncClient.get", side_effect=mock_get), patch(
+            "backend.services.discovery_service.GeminiDiscoveryService.analyze_page",
+            new=AsyncMock(return_value=ai_result),
+        ):
+            response = await client.post(
+                "/v1/discovery/run",
+                headers={"Authorization": f"Bearer {data['token_a']}"},
+                json={"website_url": "https://client-store.com/catalog", "max_pages": 2},
+            )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["created_offerings_count"] == 1
+    assert body["items"][0]["url"] == "https://client-store.com/unusual-item"
+
+
+@pytest.mark.asyncio
+async def test_browser_fallback_discovers_javascript_rendered_product(setup_discovery_tenants):
+    data = setup_discovery_tenants
+    transport = ASGITransport(app=app)
+
+    def mock_get(url, *args, **kwargs):
+        return AsyncMock(status_code=200, headers={"content-type": "text/html"}, text="<html><div id='app'></div></html>")
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        with patch("httpx.AsyncClient.get", side_effect=mock_get), patch(
+            "backend.services.discovery_service.render_page", new=AsyncMock(return_value=SAMPLE_PRODUCT_1_HTML)
+        ):
+            response = await client.post(
+                "/v1/discovery/run",
+                headers={"Authorization": f"Bearer {data['token_a']}"},
+                json={"website_url": "https://client-store.com/rendered", "max_pages": 1},
+            )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["created_offerings_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_oembed_representation_is_not_a_discovery_candidate(setup_discovery_tenants):
+    """A standard page representation must not be mistaken for a product API."""
+    data = setup_discovery_tenants
+    transport = ASGITransport(app=app)
+
+    def mock_get(url, *args, **kwargs):
+        return AsyncMock(status_code=200, headers={"content-type": "text/html"}, text=SAMPLE_OEMBED_LINKING_PAGE)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        with patch("httpx.AsyncClient.get", side_effect=mock_get), patch(
+            "backend.services.discovery_service.render_page", new=AsyncMock(return_value=None)
+        ):
+            response = await client.post(
+                "/v1/discovery/run",
+                headers={"Authorization": f"Bearer {data['token_a']}"},
+                json={"website_url": "https://client-store.com/collections/shoes", "max_pages": 5},
+            )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["total_pages_crawled"] == 1
+    assert response.json()["total_items_processed"] == 0
 
 
 @pytest.mark.asyncio
