@@ -23,7 +23,17 @@ class ClientStatusEnum(str, Enum):
 class OfferingTypeEnum(str, Enum):
     PRODUCT = "PRODUCT"
     SERVICE = "SERVICE"
+    PLAN = "PLAN"
     SUBSCRIPTION = "SUBSCRIPTION"
+    SAAS_PLAN = "SAAS_PLAN"
+    ROOM = "ROOM"
+    HOTEL_ROOM = "HOTEL_ROOM"
+    RENTAL = "RENTAL"
+    COURSE = "COURSE"
+    PACKAGE = "PACKAGE"
+    LISTING = "LISTING"
+    BOOKING = "BOOKING"
+    BUNDLE = "BUNDLE"
     SKU_BUNDLE = "SKU_BUNDLE"
     CUSTOM = "CUSTOM"
 
@@ -32,6 +42,7 @@ class CreatedViaEnum(str, Enum):
     MANUAL = "MANUAL"
     CSV_IMPORT = "CSV_IMPORT"
     URL_DISCOVERY = "URL_DISCOVERY"
+    WEBSITE_DISCOVERY = "WEBSITE_DISCOVERY"
     API_SYNC = "API_SYNC"
 
 
