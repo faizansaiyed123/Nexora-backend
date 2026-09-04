@@ -7,6 +7,7 @@ from backend.api.v1.sources import router as sources_router
 from backend.api.v1.offerings import router as offerings_router
 from backend.api.v1.offering_matches import router as offering_matches_router
 from backend.api.v1.collections import router as collections_router
+from backend.api.v1.discovery import router as discovery_router
 
 api_router = APIRouter(prefix="/v1")
 
@@ -41,6 +42,12 @@ api_router.include_router(
     offering_matches_router,
     prefix="/offering-matches",
     tags=["Offering Matches"],
+)
+
+api_router.include_router(
+    discovery_router,
+    prefix="/discovery",
+    tags=["Discovery"],
 )
 
 api_router.include_router(
