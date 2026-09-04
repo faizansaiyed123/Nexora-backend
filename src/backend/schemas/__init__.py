@@ -54,12 +54,20 @@ from backend.schemas.observation import (
     SnapshotRead,
 )
 from backend.schemas.offering import (
+    BulkImportErrorItem,
+    BulkOfferingArchiveRequest,
+    BulkOfferingArchiveResponse,
+    BulkOfferingImportRequest,
+    BulkOfferingImportResponse,
+    CompetitorMatchSummary,
     DynamicFieldDefinitionCreate,
     DynamicFieldDefinitionRead,
     OfferingCreate,
-    OfferingFilterParams,
+    OfferingDetailRead,
+    OfferingPaginationResponse,
     OfferingRead,
     OfferingUpdate,
+    ToggleMonitoringResponse,
 )
 
 __all__ = [
@@ -91,7 +99,15 @@ __all__ = [
     "OfferingCreate",
     "OfferingUpdate",
     "OfferingRead",
-    "OfferingFilterParams",
+    "OfferingDetailRead",
+    "OfferingPaginationResponse",
+    "BulkOfferingImportRequest",
+    "BulkOfferingImportResponse",
+    "BulkImportErrorItem",
+    "BulkOfferingArchiveRequest",
+    "BulkOfferingArchiveResponse",
+    "ToggleMonitoringResponse",
+    "CompetitorMatchSummary",
     # Competitor & Sources
     "CompetitorCreate",
     "CompetitorUpdate",
