@@ -232,8 +232,8 @@ class OfferingBase(BaseModel):
         examples=[Decimal("149.99")],
     )
 
-    currency: str = Field(
-        default="USD",
+    currency: Optional[str] = Field(
+        default=None,
         min_length=3,
         max_length=3,
         pattern=r"^[A-Z]{3}$",
@@ -317,8 +317,8 @@ class OfferingBase(BaseModel):
 
     @field_validator("currency")
     @classmethod
-    def normalize_currency(cls, v: Optional[str]) -> str:
-        return v.strip().upper() if v else "USD"
+    def normalize_currency(cls, v: Optional[str]) -> Optional[str]:
+        return v.strip().upper() if v else None
 
     @field_validator("market")
     @classmethod
