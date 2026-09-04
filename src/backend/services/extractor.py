@@ -67,20 +67,20 @@ SCHEMA_AVAILABILITY_MAP: Dict[str, AvailabilityStatusEnum] = {
     "outofstock": AvailabilityStatusEnum.OUT_OF_STOCK,
     "http://schema.org/outofstock": AvailabilityStatusEnum.OUT_OF_STOCK,
     "https://schema.org/outofstock": AvailabilityStatusEnum.OUT_OF_STOCK,
-    "preorder": AvailabilityStatusEnum.PRE_ORDER,
-    "http://schema.org/preorder": AvailabilityStatusEnum.PRE_ORDER,
-    "https://schema.org/preorder": AvailabilityStatusEnum.PRE_ORDER,
+    "preorder": AvailabilityStatusEnum.PREORDER,
+    "http://schema.org/preorder": AvailabilityStatusEnum.PREORDER,
+    "https://schema.org/preorder": AvailabilityStatusEnum.PREORDER,
     "discontinued": AvailabilityStatusEnum.DISCONTINUED,
     "http://schema.org/discontinued": AvailabilityStatusEnum.DISCONTINUED,
     "https://schema.org/discontinued": AvailabilityStatusEnum.DISCONTINUED,
-    "backorder": AvailabilityStatusEnum.AVAILABLE,
+    "backorder": AvailabilityStatusEnum.BACKORDER,
     "limitedavailability": AvailabilityStatusEnum.IN_STOCK,
     "onlineonly": AvailabilityStatusEnum.IN_STOCK,
     "in_stock": AvailabilityStatusEnum.IN_STOCK,
     "out_of_stock": AvailabilityStatusEnum.OUT_OF_STOCK,
-    "available": AvailabilityStatusEnum.AVAILABLE,
-    "unavailable": AvailabilityStatusEnum.UNAVAILABLE,
-    "on_request": AvailabilityStatusEnum.ON_REQUEST
+    "available": AvailabilityStatusEnum.IN_STOCK,
+    "unavailable": AvailabilityStatusEnum.OUT_OF_STOCK,
+    "on_request": AvailabilityStatusEnum.UNKNOWN,
 }
 
 
