@@ -88,9 +88,7 @@ class CollectionResult(BaseModel):
 
     error_message: Optional[str] = None
 
-    error_category: Optional[ErrorCategoryEnum] = (
-        ErrorCategoryEnum.NONE
-    )
+    error_category: Optional[ErrorCategoryEnum] = None
 
     job_id: Optional[UUID] = None
     observation_id: Optional[UUID] = None
