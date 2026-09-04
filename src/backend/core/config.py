@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     smtp_from_name: str = "Nexora"
     frontend_url: str = "http://localhost:3000"
 
+    # Gemini discovery fallback. Discovery continues with deterministic extraction
+    # when this key is not configured.
+    gemini_api_key: str = ""
+    # Verified against the configured Gemini project on 2026-09-04. This remains
+    # overridable with GEMINI_MODEL for projects with different availability.
+    gemini_model: str = "gemini-3.6-flash"
+    gemini_discovery_enabled: bool = True
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
