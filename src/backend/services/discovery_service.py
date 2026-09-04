@@ -1,50 +1,28 @@
-"""
-Website Discovery Service Layer.
-Implements the autonomous crawl and catalog extraction pipeline:
-- Validates target website URL with SSRF protection via UrlSecurityService
-- Ensures client catalog Source/Job entity exists without data collision
-- Crawls client website (homepage, sitemap, category/product links up to max_pages) safely
-- Extracts offerings via UniversalExtractor across JSON-LD, OpenGraph, Embedded SPA state, and semantic HTML
-- De-duplicates offerings by URL and SKU
-- Updates existing offerings or creates new offerings with CreatedViaEnum.WEBSITE_DISCOVERY
-- Enforces plan limits and auto-discovers dynamic fields
-- Records Job execution audit state in JobModel
-"""
+"""Generic, tenant-safe, multi-product website discovery orchestration."""
 
-import asyncio
+from __future__ import annotations
+
 from datetime import datetime, timezone
-from decimal import Decimal
 import logging
 import re
-from typing import Any, Dict, List, Optional, Set, Tuple
-from urllib.parse import urljoin, urlparse
+from typing import List, Optional, Set
+from urllib.parse import parse_qsl, urljoin, urlparse
 import uuid
 
 import httpx
 from fastapi import HTTPException, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.models.client import ClientModel
+from backend.collectors.browser import render_page
 from backend.models.competitor import CompetitorModel, SourceModel
-from backend.models.enums import (
-    CompetitorStatusEnum,
-    CreatedViaEnum,
-    ErrorCategoryEnum,
-    JobStatusEnum,
-    JobTypeEnum,
-    OfferingTypeEnum,
-    SourceTypeEnum,
-)
+from backend.models.enums import CompetitorStatusEnum, CreatedViaEnum, JobStatusEnum, JobTypeEnum, OfferingTypeEnum, SourceTypeEnum
 from backend.models.observation import JobModel
 from backend.models.offering import OfferingModel
-from backend.schemas.discovery import (
-    DiscoveredItemSummary,
-    DiscoveryJobResponse,
-    DiscoveryRunRequest,
-)
+from backend.schemas.discovery import DiscoveredItemSummary, DiscoveredProduct, DiscoveryJobResponse, DiscoveryRunRequest
 from backend.schemas.offering import OfferingCreate, OfferingUpdate
 from backend.services.extractor import UniversalExtractor
+from backend.services.gemini_discovery_service import GeminiDiscoveryService
 from backend.services.offering_service import OfferingService
 from backend.services.url_security import SecurityValidationError, UrlSecurityService
 
@@ -52,431 +30,226 @@ logger = logging.getLogger("nexora.discovery")
 
 
 class WebsiteDiscoveryService:
-    """Service handling client website analysis and catalog auto-discovery."""
+    """Discovers real offerings; page titles alone are never offerings."""
 
-    DEFAULT_USER_AGENT = (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 (compatible; NexoraBot/2.0)"
-    )
+    DEFAULT_USER_AGENT = "Mozilla/5.0 (compatible; NexoraDiscovery/1.0)"
 
     @classmethod
-    async def _get_or_create_client_source(
-        cls,
-        db: AsyncSession,
-        client_id: uuid.UUID,
-        target_url: str,
-    ) -> SourceModel:
-        """
-        Retrieves or creates an internal client catalog SourceModel to associate JobModel with.
-        Uses a designated client catalog competitor container per tenant.
-        """
-        parsed = urlparse(target_url)
-        domain = parsed.netloc.lower() or "client-website"
-
-        # Check if an internal or catalog competitor container exists for this client
-        comp_stmt = select(CompetitorModel).where(
-            CompetitorModel.client_id == client_id,
-            CompetitorModel.domain == domain,
-        )
-        comp_res = await db.execute(comp_stmt)
-        competitor = comp_res.scalar_one_or_none()
-
-        if not competitor:
-            competitor = CompetitorModel(
-                client_id=client_id,
-                name=f"Internal Catalog ({domain})",
-                domain=domain,
-                status=CompetitorStatusEnum.ACTIVE,
-            )
+    async def _get_or_create_client_source(cls, db: AsyncSession, client_id: uuid.UUID, target_url: str) -> SourceModel:
+        domain = urlparse(target_url).netloc.lower() or "client-website"
+        competitor = (await db.execute(select(CompetitorModel).where(CompetitorModel.client_id == client_id, CompetitorModel.domain == domain))).scalar_one_or_none()
+        if competitor is None:
+            competitor = CompetitorModel(client_id=client_id, name=f"Internal Catalog ({domain})", domain=domain, status=CompetitorStatusEnum.ACTIVE)
             db.add(competitor)
             await db.flush()
-
-        # Check for source
-        source_stmt = select(SourceModel).where(
-            SourceModel.competitor_id == competitor.id,
-            SourceModel.base_url == target_url,
-        )
-        source_res = await db.execute(source_stmt)
-        source = source_res.scalar_one_or_none()
-
-        if not source:
-            source = SourceModel(
-                competitor_id=competitor.id,
-                name=f"Website Discovery Source ({domain})",
-                base_url=target_url,
-                source_type=SourceTypeEnum.OFFICIAL_STORE,
-                is_active=True,
-            )
+        source = (await db.execute(select(SourceModel).where(SourceModel.competitor_id == competitor.id, SourceModel.base_url == target_url))).scalar_one_or_none()
+        if source is None:
+            source = SourceModel(competitor_id=competitor.id, name=f"Website Discovery Source ({domain})", base_url=target_url, source_type=SourceTypeEnum.OFFICIAL_STORE, is_active=True)
             db.add(source)
             await db.flush()
-
         return source
 
-    @classmethod
-    def _extract_page_links(cls, html_text: str, current_url: str, base_domain: str) -> List[str]:
-        """
-        Extracts candidate product, service, or catalog page links belonging to the same host domain.
-        """
+    @staticmethod
+    def _candidate_links(html_text: str, current_url: str, base_domain: str) -> List[str]:
+        """Find public same-site HTML links without platform or selector assumptions."""
         links: List[str] = []
-        if not html_text:
-            return links
-
-        # Match href attribute in tags
-        pattern = re.compile(r'''href\s*=\s*['"]([^'"]+)['"]''', re.IGNORECASE)
-        for match in pattern.finditer(html_text):
-            raw_href = match.group(1).strip()
-            if not raw_href or raw_href.startswith(("#", "javascript:", "mailto:", "tel:")):
+        for raw_href in re.findall(r'''href\s*=\s*["']([^"']+)["']''', html_text, re.IGNORECASE):
+            if raw_href.startswith(("#", "javascript:", "mailto:", "tel:")):
                 continue
-
-            resolved = urljoin(current_url, raw_href)
+            resolved = urljoin(current_url, raw_href.strip())
             parsed = urlparse(resolved)
-
-            # Restrict crawl to same host domain and http/https scheme
-            if parsed.scheme in ("http", "https") and parsed.netloc.lower() == base_domain:
-                # Filter out obvious non-HTML media assets
-                path_lower = parsed.path.lower()
-                if any(path_lower.endswith(ext) for ext in (
-                    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp",
-                    ".css", ".js", ".ico", ".pdf", ".zip", ".woff", ".woff2"
-                )):
-                    continue
-                # Normalize by stripping fragment
-                cleaned = parsed._replace(fragment="").geturl()
+            if parsed.scheme not in {"http", "https"} or parsed.netloc.lower() != base_domain:
+                continue
+            # oEmbed is a standard representation of a page, not a canonical
+            # offering URL. Ignore it generically, not by website/platform.
+            query_keys = {key.lower() for key, _ in parse_qsl(parsed.query, keep_blank_values=True)}
+            if parsed.path.lower().endswith(".oembed") or "oembed" in query_keys:
+                continue
+            if parsed.path.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".css", ".js", ".pdf", ".zip", ".woff", ".woff2", ".atom", ".rss", ".xml")):
+                continue
+            cleaned = parsed._replace(fragment="").geturl()
+            if cleaned != current_url:
                 links.append(cleaned)
+        # Deduplicate while preserving order, prioritizing product/detail paths first
+        unique_links = list(dict.fromkeys(links))
+        product_like = [l for l in unique_links if any(k in urlparse(l).path.lower() for k in ("/product", "/item", "/plan", "/room", "/course", "/service", "/p/"))]
+        other_links = [l for l in unique_links if l not in set(product_like)]
+        return product_like + other_links
 
-        return links
+    @staticmethod
+    def _has_explicit_evidence(product: DiscoveredProduct, page_text: str, allowed_urls: Set[str]) -> bool:
+        """Reject title-only, invented, or out-of-page product candidates."""
+        if not product.name or not product.name.strip() or not product.url:
+            return False
+        if product.url not in allowed_urls:
+            return False
+        name_present = product.name.casefold() in page_text.casefold()
+        evidence_present = any(evidence and evidence.casefold() in page_text.casefold() for evidence in product.evidence)
+        return name_present and (product.price is not None or bool(product.sku) or evidence_present or product.extraction_method == "JSON_LD_SCHEMA")
+
+    @staticmethod
+    def _structured_candidates(html_text: str, page_url: str) -> List[DiscoveredProduct]:
+        return [DiscoveredProduct.model_validate({**item, "url": urljoin(page_url, item.get("url") or page_url), "extraction_method": "JSON_LD_SCHEMA"}) for item in UniversalExtractor.extract_products_from_html_or_json(html_text, page_url)]
 
     @classmethod
-    async def run_discovery(
-        cls,
-        db: AsyncSession,
-        client_id: uuid.UUID,
-        request: DiscoveryRunRequest,
-    ) -> DiscoveryJobResponse:
-        """
-        Executes complete website discovery workflow:
-        1. SSRF URL validation
-        2. Job creation in RUNNING status
-        3. Web crawl of client website up to max_pages
-        4. Multi-tier extraction of offerings
-        5. De-duplication and database persistence (create or update)
-        6. Dynamic attribute discovery and plan quota enforcement
-        7. Job completion state recording
-        """
-        # 1. SSRF URL Validation
+    async def _analyze_page(cls, *, page_url: str, html_text: str, base_domain: str) -> tuple[List[DiscoveredProduct], List[str], str]:
+        links = cls._candidate_links(html_text, page_url, base_domain)
+        structured = cls._structured_candidates(html_text, page_url)
+        if structured:
+            if len(structured) == 1:
+                return structured, links, "PRODUCT"
+            # A collection can expose several Product records. Use their URLs as
+            # leads, but still visit the individual pages before persistence.
+            product_urls = [p.url for p in structured if p.url and p.url != page_url]
+            return [], list(dict.fromkeys(product_urls + links)), "PRODUCT_LISTING"
+
+        extracted = UniversalExtractor.extract_from_html_or_json(html_text, page_url)
+        deterministic: List[DiscoveredProduct] = []
+        # Only accept metadata evidence when no candidate links indicate a listing.
+        if (
+            extracted.get("price") is not None
+            and extracted.get("name")
+            and not links
+            # Arbitrary JSON page representations can contain a title, SKU and
+            # price. They are leads for Gemini, never deterministic products.
+            and extracted.get("strategy_used") != "DIRECT_JSON_PAYLOAD"
+        ):
+            deterministic.append(DiscoveredProduct.model_validate({**extracted, "url": page_url, "extraction_method": extracted.get("strategy_used", "STRUCTURED")}))
+
+        ai_result = await GeminiDiscoveryService.analyze_page(page_url=page_url, page_text=html_text, candidate_urls=links)
+        if ai_result:
+            allowed = set(links) | {page_url}
+            safe_urls = [url for url in ai_result.product_urls if url in set(links)]
+            ai_products = [p.model_copy(update={"extraction_method": "GEMINI_FLASH"}) for p in ai_result.products if cls._has_explicit_evidence(p, html_text, allowed)]
+            if ai_result.page_type == "PRODUCT_LISTING":
+                # Listing card data is a lead, not canonical catalog data. Fetch
+                # each product page so attributes and variants remain accurate.
+                return [], list(dict.fromkeys(safe_urls + links)), ai_result.page_type
+            return ai_products or deterministic, list(dict.fromkeys(safe_urls + links)), ai_result.page_type
+        return deterministic, links, "PRODUCT" if deterministic else "UNKNOWN"
+
+    @classmethod
+    async def _persist_product(cls, db: AsyncSession, client_id: uuid.UUID, product: DiscoveredProduct, offering_type: OfferingTypeEnum) -> tuple[Optional[DiscoveredItemSummary], str]:
+        if not product.name or not product.url:
+            return None, "SKIPPED"
         try:
-            validated_base_url = UrlSecurityService.validate_url(request.website_url)
-        except SecurityValidationError as e:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Invalid or prohibited website URL: {str(e)}",
-            )
+            safe_url = UrlSecurityService.validate_url(product.url, allow_empty=False)
+            safe_image = UrlSecurityService.validate_url(product.image_url) if product.image_url else None
+        except SecurityValidationError:
+            return None, "SKIPPED"
+        clauses = [OfferingModel.url == safe_url]
+        if product.sku:
+            clauses.append(OfferingModel.sku == product.sku)
+        existing = (await db.execute(select(OfferingModel).where(OfferingModel.client_id == client_id, or_(*clauses)))).scalar_one_or_none()
+        attributes = dict(product.attributes or {})
+        if product.brand:
+            attributes.setdefault("brand", product.brand)
+        if product.availability:
+            attributes.setdefault("availability", product.availability)
+        attributes.setdefault("discovery_method", product.extraction_method)
+        try:
+            if existing:
+                result = await OfferingService.update(db, client_id, existing.id, OfferingUpdate(name=product.name, sku=product.sku or existing.sku, current_price=product.price, currency=product.currency, url=safe_url, category=product.category, image_url=safe_image, attributes=attributes))
+                action = "UPDATED"
+            else:
+                result = await OfferingService.create(db, client_id, OfferingCreate(name=product.name, offering_type=offering_type, sku=product.sku, current_price=product.price, currency=product.currency, market="US", url=safe_url, category=product.category, image_url=safe_image, attributes=attributes, is_monitored=True, created_via=CreatedViaEnum.WEBSITE_DISCOVERY))
+                action = "CREATED"
+        except Exception as exc:
+            logger.warning("Could not persist discovered offering %s: %s", product.name, exc)
+            # OfferingService commits internally. A failed flush/commit leaves
+            # this request session unusable until rollback; isolate the bad
+            # candidate so the job can record its final state and continue.
+            await db.rollback()
+            return None, "SKIPPED"
+        return DiscoveredItemSummary(id=result.id, name=result.name, sku=result.sku, price=result.current_price, currency=product.currency, url=result.url, category=result.category, image_url=result.image_url, attributes=result.attributes, action=action), action
 
-        parsed_base = urlparse(validated_base_url)
-        base_domain = parsed_base.netloc.lower()
-
-        # 2. Setup Source and Job record
-        source = await cls._get_or_create_client_source(db, client_id, validated_base_url)
-
-        job = JobModel(
-            source_id=source.id,
-            job_type=JobTypeEnum.SCHEMA_DISCOVERY,
-            status=JobStatusEnum.RUNNING,
-            started_at=datetime.now(timezone.utc),
-            meta_info={
-                "client_id": str(client_id),
-                "target_url": validated_base_url,
-                "max_pages": request.max_pages,
-                "default_offering_type": request.default_offering_type.value,
-            },
-        )
+    @classmethod
+    async def run_discovery(cls, db: AsyncSession, client_id: uuid.UUID, request: DiscoveryRunRequest) -> DiscoveryJobResponse:
+        try:
+            target_url = UrlSecurityService.validate_url(request.website_url, allow_empty=False)
+        except SecurityValidationError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Invalid or prohibited website URL: {exc}")
+        source = await cls._get_or_create_client_source(db, client_id, target_url)
+        job = JobModel(source_id=source.id, job_type=JobTypeEnum.SCHEMA_DISCOVERY, status=JobStatusEnum.RUNNING, started_at=datetime.now(timezone.utc), meta_info={"client_id": str(client_id), "target_url": target_url, "max_pages": request.max_pages})
         db.add(job)
         await db.commit()
-        await db.refresh(job)
 
-        # 3. Safe HTTP Crawling & Extraction
-        visited_urls: Set[str] = set()
-        queue: List[str] = [validated_base_url]
-        discovered_items_raw: List[Dict[str, Any]] = []
-
-        headers = {
-            "User-Agent": cls.DEFAULT_USER_AGENT,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-        }
-
-        async with httpx.AsyncClient(
-            headers=headers,
-            timeout=15.0,
-            follow_redirects=True,
-            verify=True,
-        ) as http_client:
-            while queue and len(visited_urls) < request.max_pages:
-                current_url = queue.pop(0)
-                if current_url in visited_urls:
+        base_domain = urlparse(target_url).netloc.lower()
+        queue, visited, candidates = [target_url], set(), []
+        seen_product_urls: Set[str] = set()
+        created = updated = failed = 0
+        diagnostics: List[str] = []
+        headers = {"User-Agent": cls.DEFAULT_USER_AGENT, "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8"}
+        async with httpx.AsyncClient(headers=headers, timeout=20.0, follow_redirects=True) as client:
+            while queue and len(visited) < request.max_pages:
+                current = queue.pop(0)
+                if current in visited:
                     continue
-
-                # Re-validate every crawled link against SSRF rules before making network calls
                 try:
-                    safe_url = UrlSecurityService.validate_url(current_url)
+                    safe_url = UrlSecurityService.validate_url(current, allow_empty=False)
                 except SecurityValidationError:
                     continue
-
-                visited_urls.add(current_url)
-
+                visited.add(safe_url)
                 try:
-                    response = await http_client.get(safe_url)
+                    response = await client.get(safe_url)
                     if response.status_code != 200:
+                        diagnostics.append(f"Skipped {safe_url}: HTTP {response.status_code}")
                         continue
-
                     content_type = response.headers.get("content-type", "").lower()
                     if "text/html" not in content_type and "application/json" not in content_type:
                         continue
-
-                    html_text = response.text
-
-                    # Extract candidate offerings from page
-                    extracted = UniversalExtractor.extract_from_html_or_json(
-                        raw_text=html_text,
-                        target_url=safe_url,
-                    )
-
-                    # If page yielded a valid name or price, consider it an offering
-                    if extracted.get("name") or extracted.get("price") is not None:
-                        extracted["url"] = safe_url
-                        discovered_items_raw.append(extracted)
-
-                    # Extract outgoing links if we haven't reached max_pages
-                    if len(visited_urls) < request.max_pages:
-                        page_links = cls._extract_page_links(html_text, safe_url, base_domain)
-                        for link in page_links:
-                            if link not in visited_urls and link not in queue:
+                    page_text = response.text
+                    products, links, page_type = await cls._analyze_page(page_url=safe_url, html_text=page_text, base_domain=base_domain)
+                    if not products and not links:
+                        rendered = await render_page(safe_url)
+                        if rendered:
+                            products, links, page_type = await cls._analyze_page(page_url=safe_url, html_text=rendered, base_domain=base_domain)
+                            page_text = rendered
+                    for product in products:
+                        if product.url in seen_product_urls or not cls._has_explicit_evidence(product, page_text, set(links) | {safe_url}):
+                            continue
+                        seen_product_urls.add(product.url)
+                        candidates.append(product)
+                    if page_type in {"PRODUCT_LISTING", "OTHER", "UNKNOWN"}:
+                        for link in links:
+                            if link not in visited and link not in queue:
                                 queue.append(link)
+                except Exception as exc:
+                    logger.warning("Discovery fetch failed for %s: %s", safe_url, exc)
+                    diagnostics.append(f"Skipped {safe_url}: fetch failed")
 
-                except Exception as crawl_err:
-                    logger.warning(f"Error fetching {current_url} during discovery: {crawl_err}")
-                    continue
-
-        # 4. De-duplicate raw discovered items by URL or SKU
-        unique_items: Dict[str, Dict[str, Any]] = {}
-        for raw in discovered_items_raw:
-            dedup_key = raw.get("url") or raw.get("sku") or raw.get("name")
-            if dedup_key and dedup_key not in unique_items:
-                unique_items[dedup_key] = raw
-
-        # 5. Persist offerings to database (Create or Update)
-        created_count = 0
-        updated_count = 0
-        failed_count = 0
         summaries: List[DiscoveredItemSummary] = []
-
-        for item_data in unique_items.values():
-            name = item_data.get("name") or "Discovered Offering"
-            item_url = item_data.get("url")
-            sku = item_data.get("sku")
-            price_val = item_data.get("price")
-            currency = item_data.get("currency") or "USD"
-            category = item_data.get("category")
-            image_url = item_data.get("image_url")
-            brand = item_data.get("brand")
-
-            current_price: Optional[Decimal] = None
-            if price_val is not None:
-                try:
-                    current_price = Decimal(str(price_val)).quantize(Decimal("0.01"))
-                except Exception:
-                    current_price = None
-
-            attributes: Dict[str, Any] = item_data.get("attributes") or {}
-            if brand and "brand" not in attributes:
-                attributes["brand"] = brand
-            if item_data.get("strategy_used"):
-                attributes["discovery_strategy"] = item_data.get("strategy_used")
-
-            # Check if offering already exists for this client (matched by URL or SKU)
-            existing_offering: Optional[OfferingModel] = None
-            match_clauses = []
-            if item_url:
-                match_clauses.append(OfferingModel.url == item_url)
-            if sku:
-                match_clauses.append(OfferingModel.sku == sku)
-
-            if match_clauses:
-                existing_stmt = select(OfferingModel).where(
-                    OfferingModel.client_id == client_id,
-                    or_(*match_clauses),
-                )
-                existing_res = await db.execute(existing_stmt)
-                existing_offering = existing_res.scalar_one_or_none()
-
-            try:
-                if existing_offering:
-                    # Update existing offering
-                    update_data = OfferingUpdate(
-                        name=name if name != "Discovered Offering" else existing_offering.name,
-                        current_price=current_price if current_price is not None else existing_offering.current_price,
-                        currency=currency if currency else existing_offering.currency,
-                        url=item_url if item_url else existing_offering.url,
-                        category=category if category else existing_offering.category,
-                        image_url=image_url if image_url else existing_offering.image_url,
-                        attributes=attributes,
-                    )
-                    updated_obj = await OfferingService.update(
-                        db=db,
-                        offering_id=existing_offering.id,
-                        client_id=client_id,
-                        data=update_data,
-                    )
-                    updated_count += 1
-                    summaries.append(
-                        DiscoveredItemSummary(
-                            id=updated_obj.id,
-                            name=updated_obj.name,
-                            sku=updated_obj.sku,
-                            price=updated_obj.current_price,
-                            currency=updated_obj.currency,
-                            url=updated_obj.url,
-                            category=updated_obj.category,
-                            image_url=updated_obj.image_url,
-                            attributes=updated_obj.attributes,
-                            action="UPDATED",
-                        )
-                    )
-                else:
-                    # Create new offering via OfferingService
-                    create_data = OfferingCreate(
-                        name=name,
-                        offering_type=request.default_offering_type,
-                        sku=sku,
-                        current_price=current_price,
-                        currency=currency,
-                        market="US",
-                        url=item_url,
-                        category=category,
-                        image_url=image_url,
-                        attributes=attributes,
-                        is_monitored=True,
-                        created_via=CreatedViaEnum.WEBSITE_DISCOVERY,
-                    )
-                    new_obj = await OfferingService.create(
-                        db=db,
-                        client_id=client_id,
-                        data=create_data,
-                    )
-                    created_count += 1
-                    summaries.append(
-                        DiscoveredItemSummary(
-                            id=new_obj.id,
-                            name=new_obj.name,
-                            sku=new_obj.sku,
-                            price=new_obj.current_price,
-                            currency=new_obj.currency,
-                            url=new_obj.url,
-                            category=new_obj.category,
-                            image_url=new_obj.image_url,
-                            attributes=new_obj.attributes,
-                            action="CREATED",
-                        )
-                    )
-            except Exception as persist_err:
-                logger.error(f"Error persisting discovered item '{name}': {persist_err}")
-                failed_count += 1
-                summaries.append(
-                    DiscoveredItemSummary(
-                        id=None,
-                        name=name,
-                        sku=sku,
-                        price=current_price,
-                        currency=currency,
-                        url=item_url,
-                        category=category,
-                        image_url=image_url,
-                        attributes=attributes,
-                        action="SKIPPED",
-                    )
-                )
-
-        # 6. Update Job status
-        total_items = len(unique_items)
-        successful_items = created_count + updated_count
-
-        job.status = JobStatusEnum.COMPLETED if (successful_items > 0 or total_items == 0) else JobStatusEnum.FAILED
-        job.total_items_processed = total_items
-        job.successful_items = successful_items
-        job.failed_items = failed_count
+        for product in candidates:
+            summary, action = await cls._persist_product(db, client_id, product, request.default_offering_type)
+            created += action == "CREATED"
+            updated += action == "UPDATED"
+            failed += action == "SKIPPED"
+            if summary:
+                summaries.append(summary)
+        if not candidates:
+            diagnostics.append("No valid offerings discovered.")
+        job.status = JobStatusEnum.COMPLETED
+        job.total_items_processed, job.successful_items, job.failed_items = len(candidates), created + updated, failed
         job.completed_at = datetime.now(timezone.utc)
+        job.error_message = None if candidates else diagnostics[-1]
         job.meta_info = {
-            **job.meta_info,
-            "pages_crawled": len(visited_urls),
-            "created_count": created_count,
-            "updated_count": updated_count,
-            "failed_count": failed_count,
+            "client_id": str(client_id),
+            "target_url": target_url,
+            "max_pages": request.max_pages,
+            "pages_crawled": len(visited),
+            "created_count": created,
+            "updated_count": updated,
+            "diagnostics": diagnostics,
         }
-        if total_items == 0 and len(visited_urls) > 0:
-            job.meta_info["notice"] = "No structured offerings detected on crawled pages."
-
         await db.commit()
         await db.refresh(job)
-
-        return DiscoveryJobResponse(
-            job_id=job.id,
-            client_id=client_id,
-            target_url=validated_base_url,
-            status=job.status,
-            total_pages_crawled=len(visited_urls),
-            total_items_processed=total_items,
-            successful_items=successful_items,
-            failed_items=failed_count,
-            error_message=job.error_message,
-            created_offerings_count=created_count,
-            updated_offerings_count=updated_count,
-            items=summaries,
-            started_at=job.started_at,
-            completed_at=job.completed_at,
-        )
+        return DiscoveryJobResponse(job_id=job.id, client_id=client_id, target_url=target_url, status=job.status, total_pages_crawled=len(visited), total_items_processed=len(candidates), successful_items=created + updated, failed_items=failed, error_message=job.error_message, created_offerings_count=created, updated_offerings_count=updated, items=summaries, started_at=job.started_at, completed_at=job.completed_at)
 
     @classmethod
-    async def get_discovery_job(
-        cls,
-        db: AsyncSession,
-        job_id: uuid.UUID,
-        client_id: uuid.UUID,
-    ) -> DiscoveryJobResponse:
-        """
-        Retrieves discovery job status with strict client/tenant isolation.
-        """
-        stmt = (
-            select(JobModel)
-            .join(SourceModel, JobModel.source_id == SourceModel.id)
-            .join(CompetitorModel, SourceModel.competitor_id == CompetitorModel.id)
-            .where(
-                JobModel.id == job_id,
-                CompetitorModel.client_id == client_id,
-            )
-        )
-        res = await db.execute(stmt)
-        job = res.scalar_one_or_none()
-
+    async def get_discovery_job(cls, db: AsyncSession, job_id: uuid.UUID, client_id: uuid.UUID) -> DiscoveryJobResponse:
+        statement = select(JobModel).join(SourceModel).join(CompetitorModel).where(JobModel.id == job_id, CompetitorModel.client_id == client_id)
+        job = (await db.execute(statement)).scalar_one_or_none()
         if not job:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Discovery job not found.",
-            )
-
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Discovery job not found.")
         meta = job.meta_info or {}
-        return DiscoveryJobResponse(
-            job_id=job.id,
-            client_id=client_id,
-            target_url=meta.get("target_url", ""),
-            status=job.status,
-            total_pages_crawled=meta.get("pages_crawled", 0),
-            total_items_processed=job.total_items_processed,
-            successful_items=job.successful_items,
-            failed_items=job.failed_items,
-            error_message=job.error_message,
-            created_offerings_count=meta.get("created_count", 0),
-            updated_offerings_count=meta.get("updated_count", 0),
-            items=[],
-            started_at=job.started_at,
-            completed_at=job.completed_at,
-        )
+        return DiscoveryJobResponse(job_id=job.id, client_id=client_id, target_url=meta.get("target_url", ""), status=job.status, total_pages_crawled=meta.get("pages_crawled", 0), total_items_processed=job.total_items_processed, successful_items=job.successful_items, failed_items=job.failed_items, error_message=job.error_message, created_offerings_count=meta.get("created_count", 0), updated_offerings_count=meta.get("updated_count", 0), items=[], started_at=job.started_at, completed_at=job.completed_at)
