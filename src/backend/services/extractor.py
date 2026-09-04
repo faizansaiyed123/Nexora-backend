@@ -156,6 +156,78 @@ class UniversalExtractor:
         return data
 
     @classmethod
+    def extract_products_from_html_or_json(
+        cls,
+        raw_text: str,
+        target_url: str,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return every explicitly structured product on a page.
+
+        This complements (and does not replace) the legacy singleton extractor.
+        It deliberately accepts only Product-like JSON/JSON-LD records, avoiding
+        title-only collection pages.
+        """
+        products: List[Dict[str, Any]] = []
+
+        def visit(node: Any) -> None:
+            if isinstance(node, list):
+                for value in node:
+                    visit(value)
+                return
+            if not isinstance(node, dict):
+                return
+            if isinstance(node.get("@graph"), list):
+                visit(node["@graph"])
+            kind = node.get("@type", "")
+            kinds = kind if isinstance(kind, list) else [kind]
+            is_product = any(
+                str(value).lower() in {"product", "individualproduct", "productmodel", "service", "hotelroom"}
+                for value in kinds
+            )
+            if is_product:
+                item: Dict[str, Any] = {
+                    "name": str(node["name"]).strip() if node.get("name") else None,
+                    "url": node.get("url") or target_url,
+                    "sku": next((str(node[key]).strip() for key in ("sku", "gtin13", "gtin14", "gtin", "mpn") if node.get(key)), None),
+                    "brand": (node.get("brand", {}).get("name") if isinstance(node.get("brand"), dict) else node.get("brand")),
+                    "category": node.get("category"),
+                    "image_url": (node.get("image", [None])[0] if isinstance(node.get("image"), list) else node.get("image")),
+                    "price": None,
+                    "currency": None,
+                    "availability": AvailabilityStatusEnum.UNKNOWN.value,
+                    "attributes": {},
+                    "strategy_used": "JSON_LD_SCHEMA",
+                }
+                offer_data: Dict[str, Any] = {"price": None, "currency": None, "availability": None}
+                cls._extract_from_offers_obj(node.get("offers"), offer_data) if node.get("offers") else None
+                item["price"] = offer_data.get("price")
+                item["currency"] = offer_data.get("currency")
+                availability = offer_data.get("availability")
+                if isinstance(availability, AvailabilityStatusEnum):
+                    item["availability"] = availability.value
+                products.append(item)
+            for key, value in node.items():
+                if key not in {"@graph", "offers"}:
+                    visit(value)
+
+        try:
+            trimmed = raw_text.strip()
+            if trimmed.startswith(("{", "[")):
+                visit(json.loads(trimmed))
+            for block in re.findall(r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', raw_text, re.DOTALL | re.IGNORECASE):
+                visit(json.loads(block.strip()))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+
+        unique: Dict[str, Dict[str, Any]] = {}
+        for product in products:
+            key = str(product.get("url") or product.get("sku") or product.get("name") or "")
+            if key and key not in unique:
+                unique[key] = product
+        return list(unique.values())
+
+    @classmethod
     def _extract_json_ld(cls, html_content: str, out: Dict[str, Any]) -> None:
         """Extracts JSON-LD script tags (<script type="application/ld+json">)."""
         pattern = re.compile(
