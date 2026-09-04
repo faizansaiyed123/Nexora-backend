@@ -4,12 +4,42 @@ Pydantic v2 schemas for Website Discovery and Automated Catalog Extraction.
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 import uuid
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from backend.models.enums import CreatedViaEnum, JobStatusEnum, OfferingTypeEnum
+
+
+class DiscoveredProduct(BaseModel):
+    """Evidence-based product candidate produced during website analysis."""
+
+    name: Optional[str] = None
+    url: Optional[str] = None
+    price: Optional[Decimal] = None
+    currency: Optional[str] = Field(default=None, min_length=3, max_length=3)
+    sku: Optional[str] = None
+    brand: Optional[str] = None
+    category: Optional[str] = None
+    image_url: Optional[str] = None
+    availability: Optional[str] = None
+    attributes: Dict[str, Any] = Field(default_factory=dict)
+    extraction_method: str = "STRUCTURED"
+    evidence: List[str] = Field(default_factory=list, exclude=True)
+
+    @field_validator("currency")
+    @classmethod
+    def normalize_currency(cls, value: Optional[str]) -> Optional[str]:
+        return value.strip().upper() if value else None
+
+
+class GeminiDiscoveryResult(BaseModel):
+    """Strict structured response expected from Gemini; never persisted directly."""
+
+    page_type: Literal["PRODUCT", "PRODUCT_LISTING", "OTHER", "UNKNOWN"] = "UNKNOWN"
+    product_urls: List[str] = Field(default_factory=list)
+    products: List[DiscoveredProduct] = Field(default_factory=list)
 
 
 class DiscoveryRunRequest(BaseModel):
