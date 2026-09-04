@@ -209,10 +209,9 @@ class OfferingModel(Base):
         nullable=True,
     )
 
-    currency: Mapped[str] = mapped_column(
+    currency: Mapped[Optional[str]] = mapped_column(
         String(3),
-        default="USD",
-        nullable=False,
+        nullable=True,
     )
 
     market: Mapped[str] = mapped_column(
