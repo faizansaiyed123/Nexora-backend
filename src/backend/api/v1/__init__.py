@@ -8,7 +8,6 @@ from backend.api.v1.offerings import router as offerings_router
 from backend.api.v1.offering_matches import router as offering_matches_router
 from backend.api.v1.collections import router as collections_router
 
-
 api_router = APIRouter(prefix="/v1")
 
 
