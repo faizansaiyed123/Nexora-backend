@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-3.6-flash"
     gemini_discovery_enabled: bool = True
 
+    # Background monitoring schedule
+    scheduled_collection_interval_minutes: int = 60
+
     @model_validator(mode="after")
     def validate_runtime_security(self) -> "Settings":
         if self.environment.lower() in {"prod", "production"}:
