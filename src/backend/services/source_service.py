@@ -75,6 +75,11 @@ class SourceService:
         await db.flush()
 
         # Create configuration if supplied.
+        if data.configuration and data.configuration.requires_proxy:
+            raise ValidationException(
+                "Proxy collection is not implemented in the current runtime.",
+                code="UNSUPPORTED_PROXY_COLLECTION",
+            )
         if data.configuration:
             configuration = SourceConfigurationModel(
                 source_id=source.id,
@@ -258,6 +263,12 @@ class SourceService:
         update_data = data.model_dump(
             exclude_unset=True
         )
+
+        if update_data.get("requires_proxy"):
+            raise ValidationException(
+                "Proxy collection is not implemented in the current runtime.",
+                code="UNSUPPORTED_PROXY_COLLECTION",
+            )
 
         for field, value in update_data.items():
             setattr(configuration, field, value)
