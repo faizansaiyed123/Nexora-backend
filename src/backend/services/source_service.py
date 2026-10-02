@@ -176,6 +176,10 @@ class SourceService:
             exclude_unset=True
         )
 
+        if "verification_status" in update_data:
+            update_data["verification_status"] = update_data["verification_status"]
+
+
         if "collection_method" in update_data and update_data["collection_method"] not in {CollectionMethodEnum.HTTP_FAST, CollectionMethodEnum.PLAYWRIGHT_BROWSER}:
             raise ValidationException(
                 "This collection method is not available in the current runtime.",
