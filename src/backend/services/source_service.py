@@ -283,9 +283,10 @@ class SourceService:
     @staticmethod
     def before_collection(source: SourceModel) -> bool:
         """Return whether a source is currently eligible for collection."""
-        if not source.is_active:
+        if getattr(source, "is_active", None) is False:
             return False
-        if source.circuit_state != CircuitStateEnum.OPEN:
+        circuit_state = getattr(source, "circuit_state", None) or CircuitStateEnum.CLOSED
+        if circuit_state != CircuitStateEnum.OPEN:
             return True
 
         opened = source.circuit_opened_at
