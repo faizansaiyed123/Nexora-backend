@@ -138,7 +138,21 @@ class CollectionService:
                     location = response.headers.get("location")
                     if not location:
                         break
-                    current_url = UrlSecurityService.validate_url(urljoin(current_url, location))
+                    try:
+                        current_url = UrlSecurityService.validate_url(urljoin(current_url, location))
+                    except SecurityValidationError as exc:
+                        return CollectionResult(
+                            success=False,
+                            url=current_url,
+                            status_code=response.status_code,
+                            response_time_ms=int((time.perf_counter() - start_time) * 1000),
+                            price=None,
+                            currency=None,
+                            availability=None,
+                            attributes={"redirect_blocked": True},
+                            extraction_status="SECURITY_BLOCKED",
+                            error=str(exc),
+                        )
                 if response is None:
                     raise httpx.HTTPError("No HTTP response received")
 
