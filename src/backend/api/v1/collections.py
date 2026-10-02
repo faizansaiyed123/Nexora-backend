@@ -1,3 +1,4 @@
+import asyncio
 from typing import Annotated
 from uuid import UUID
 
@@ -7,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.core.deps import AuthenticatedUserContext, get_current_user_claims
+from backend.core.rate_limit import DistributedRateLimiter
 from backend.db.session import get_db
 from backend.models.competitor import (
     OfferingMatchModel,
@@ -23,6 +25,7 @@ from backend.models.enums import (
     JobTypeEnum,
 )
 from backend.services.alert_service import AlertService
+from backend.collectors.browser import render_page
 from backend.services.collection_service import CollectionService
 
 
@@ -81,6 +84,9 @@ async def run_collection(
         offering_match is None
         or offering_match.offering is None
         or offering_match.offering.client_id != auth_ctx.client_id
+        or offering_match.source is None
+        or offering_match.source.competitor is None
+        or offering_match.source.competitor.client_id != auth_ctx.client_id
     ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -130,10 +136,41 @@ async def run_collection(
 
     try:
         collector = CollectionService()
+        configuration = source.configuration if source else None
+        timeout = float(configuration.timeout_seconds) if configuration else collector.DEFAULT_TIMEOUT
+        headers = configuration.custom_headers if configuration else None
+        selectors = configuration.extraction_selectors if configuration else None
+
+        if configuration:
+            await DistributedRateLimiter.check_rate_limit(
+                "source",
+                str(source.id),
+                max_requests=configuration.rate_limit_rpm,
+                window_seconds=60,
+            )
+            if configuration.request_delay_seconds > 0:
+                await asyncio.sleep(configuration.request_delay_seconds)
 
         collection_result = await collector.collect(
-            target_url_val
+            target_url_val,
+            timeout=timeout,
+            headers=headers if isinstance(headers, dict) else None,
+            custom_selectors=selectors if isinstance(selectors, dict) else None,
         )
+
+        if configuration and configuration.requires_javascript:
+            rendered_html = await render_page(
+                target_url_val,
+                timeout_seconds=configuration.timeout_seconds,
+            )
+            if rendered_html:
+                collection_result = collector.from_rendered_html(
+                    rendered_html,
+                    target_url_val,
+                    response_time_ms=collection_result.response_time_ms,
+                    status_code=collection_result.status_code or 200,
+                    custom_selectors=selectors if isinstance(selectors, dict) else None,
+                )
 
         # -----------------------------------------------------
         # 4. Convert availability safely
@@ -190,71 +227,58 @@ async def run_collection(
                 == offering_match_id_val
             )
         )
-
         snapshot = snapshot_result.scalar_one_or_none()
 
-        # -----------------------------------------------------
-        # 7. Create or update snapshot
-        # -----------------------------------------------------
-
-        price_movement = "FIRST_OBSERVATION"
         previous_price = snapshot.current_price if snapshot is not None else None
         previous_availability = snapshot.current_availability if snapshot is not None else None
+        price_movement = "FIRST_OBSERVATION"
 
-        if snapshot is None:
+        # -----------------------------------------------------
+        # 7. Create/update snapshot only for successful data
+        # -----------------------------------------------------
 
-            snapshot = SnapshotModel(
-                offering_match_id=offering_match_id_val,
-                current_price=collection_result.price,
-                previous_price=None,
-                price_difference=None,
-                percentage_difference=None,
-                current_availability=availability,
-                last_observed_at=observation.observed_at,
-            )
-
-            session.add(snapshot)
-
-        else:
-
-            current_price = collection_result.price
-
-            snapshot.previous_price = previous_price
-            snapshot.current_price = current_price
-
-            if (
-                previous_price is not None
-                and current_price is not None
-            ):
-                difference = (
-                    current_price - previous_price
+        if collection_result.success:
+            if snapshot is None:
+                snapshot = SnapshotModel(
+                    offering_match_id=offering_match_id_val,
+                    current_price=collection_result.price,
+                    previous_price=None,
+                    price_difference=None,
+                    percentage_difference=None,
+                    current_availability=availability,
+                    last_observed_at=observation.observed_at,
                 )
+                session.add(snapshot)
+            else:
+                current_price = collection_result.price
+                snapshot.previous_price = snapshot.current_price
+                snapshot.current_price = current_price
 
-                snapshot.price_difference = difference
+                if (
+                    previous_price is not None
+                    and current_price is not None
+                ):
+                    difference = current_price - previous_price
+                    snapshot.price_difference = difference
+                    if previous_price != 0:
+                        snapshot.percentage_difference = float(
+                            (difference / previous_price) * 100
+                        )
+                    else:
+                        snapshot.percentage_difference = None
 
-                if previous_price != 0:
-                    snapshot.percentage_difference = float(
-                        (
-                            difference / previous_price
-                        ) * 100
-                    )
+                    if difference > 0:
+                        price_movement = "INCREASE"
+                    elif difference < 0:
+                        price_movement = "DECREASE"
+                    else:
+                        price_movement = "UNCHANGED"
                 else:
+                    snapshot.price_difference = None
                     snapshot.percentage_difference = None
 
-                if difference > 0:
-                    price_movement = "INCREASE"
-                elif difference < 0:
-                    price_movement = "DECREASE"
-                else:
-                    price_movement = "UNCHANGED"
-
-            else:
-                snapshot.price_difference = None
-                snapshot.percentage_difference = None
-                price_movement = "FIRST_OBSERVATION"
-
-            snapshot.current_availability = availability
-            snapshot.last_observed_at = observation.observed_at
+                snapshot.current_availability = availability
+                snapshot.last_observed_at = observation.observed_at
 
         # -----------------------------------------------------
         # 8. Competitive comparison
