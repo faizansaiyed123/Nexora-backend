@@ -190,7 +190,7 @@ async def bulk_archive_offerings(
 @router.get(
     "/export",
     summary="Export Catalog (CSV or JSON)",
-    dependencies=[Depends(require_analyst)],
+    dependencies=[Depends(require_reader)],
 )
 async def export_catalog(
     auth_ctx: Annotated[
