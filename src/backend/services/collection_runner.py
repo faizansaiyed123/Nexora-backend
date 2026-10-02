@@ -90,6 +90,7 @@ class CollectionRunner:
                 timeout=timeout,
                 headers=headers,
                 custom_selectors=selectors,
+                max_retries=config.max_retries if config else 0,
             )
 
             if config and config.requires_javascript:
@@ -185,9 +186,14 @@ class CollectionRunner:
                 session.add(snapshot)
             else:
                 previous_snapshot.previous_price = previous_snapshot.current_price
-                previous_snapshot.current_price = current_price
-                previous_snapshot.price_difference = price_difference
-                previous_snapshot.percentage_difference = percentage_difference
+                previous_snapshot.previous_price = previous_snapshot.current_price
+                if current_price is not None:
+                    previous_snapshot.current_price = current_price
+                    previous_snapshot.price_difference = price_difference
+                    previous_snapshot.percentage_difference = percentage_difference
+                else:
+                    previous_snapshot.price_difference = None
+                    previous_snapshot.percentage_difference = None
                 previous_snapshot.current_availability = availability
                 previous_snapshot.last_observed_at = observation.observed_at
 
