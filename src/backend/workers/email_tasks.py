@@ -139,3 +139,29 @@ Regards,
         subject=subject,
         body=body,
     )
+
+
+async def send_competitive_alert_email_async(
+    email: str,
+    alert_title: str,
+    message: str,
+) -> None:
+    subject = f"Nexora Competitive Alert: {alert_title}"
+    body = f"""Hello,
+
+Nexora detected a competitive intelligence event:
+
+{alert_title}
+
+{message}
+
+Open your Nexora workspace to review the latest observation and decide whether action is needed.
+
+Regards,
+{settings.smtp_from_name}
+"""
+    await _send_email(
+        to_email=email,
+        subject=subject,
+        body=body,
+    )
