@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.deps import AuthenticatedUserContext, get_current_user_claims, require_analyst
+from backend.core.deps import AuthenticatedUserContext, get_current_user_claims, require_analyst, require_reader
 from backend.db.session import get_db
 from backend.models.competitor import CompetitorModel, SourceModel
 from backend.models.observation import JobModel
