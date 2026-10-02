@@ -5,18 +5,21 @@ All source operations are tenant-scoped through the competitor's client_id.
 """
 
 import uuid
+from datetime import datetime, timezone
 from typing import List
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from backend.core.exceptions import ForbiddenException
+from backend.core.exceptions import ForbiddenException, ValidationException
+from backend.models.enums import CircuitStateEnum, CollectionMethodEnum, HealthStatusEnum
 from backend.models.competitor import (
     CompetitorModel,
     SourceConfigurationModel,
     SourceModel,
 )
+from backend.services.url_security import UrlSecurityService
 from backend.schemas.competitor import (
     SourceConfigurationUpdate,
     SourceCreate,
@@ -51,11 +54,19 @@ class SourceService:
                 code="COMPETITOR_NOT_FOUND",
             )
 
+        # Validate before persistence so collection can never target internal hosts.
+        if data.collection_method not in {CollectionMethodEnum.HTTP_FAST, CollectionMethodEnum.PLAYWRIGHT_BROWSER}:
+            raise ValidationException(
+                "This collection method is not available in the current runtime.",
+                code="UNSUPPORTED_COLLECTION_METHOD",
+            )
+        safe_base_url = UrlSecurityService.validate_url(data.base_url)
+
         # Create source.
         source = SourceModel(
             competitor_id=data.competitor_id,
             name=data.name,
-            base_url=data.base_url,
+            base_url=safe_base_url,
             source_type=data.source_type,
             collection_method=data.collection_method,
         )
@@ -64,6 +75,11 @@ class SourceService:
         await db.flush()
 
         # Create configuration if supplied.
+        if data.configuration and data.configuration.requires_proxy:
+            raise ValidationException(
+                "Proxy collection is not implemented in the current runtime.",
+                code="UNSUPPORTED_PROXY_COLLECTION",
+            )
         if data.configuration:
             configuration = SourceConfigurationModel(
                 source_id=source.id,
@@ -165,6 +181,19 @@ class SourceService:
             exclude_unset=True
         )
 
+        if "verification_status" in update_data:
+            update_data["verification_status"] = update_data["verification_status"]
+
+
+        if "collection_method" in update_data and update_data["collection_method"] not in {CollectionMethodEnum.HTTP_FAST, CollectionMethodEnum.PLAYWRIGHT_BROWSER}:
+            raise ValidationException(
+                "This collection method is not available in the current runtime.",
+                code="UNSUPPORTED_COLLECTION_METHOD",
+            )
+
+        if "base_url" in update_data:
+            update_data["base_url"] = UrlSecurityService.validate_url(update_data["base_url"])
+
         for field, value in update_data.items():
             setattr(source, field, value)
 
@@ -235,6 +264,12 @@ class SourceService:
             exclude_unset=True
         )
 
+        if update_data.get("requires_proxy"):
+            raise ValidationException(
+                "Proxy collection is not implemented in the current runtime.",
+                code="UNSUPPORTED_PROXY_COLLECTION",
+            )
+
         for field, value in update_data.items():
             setattr(configuration, field, value)
 
@@ -243,3 +278,52 @@ class SourceService:
         await db.refresh(configuration)
 
         return configuration
+
+
+    @staticmethod
+    def before_collection(source: SourceModel) -> bool:
+        """Return whether a source is currently eligible for collection."""
+        if getattr(source, "is_active", None) is False:
+            return False
+        circuit_state = getattr(source, "circuit_state", None) or CircuitStateEnum.CLOSED
+        if circuit_state != CircuitStateEnum.OPEN:
+            return True
+
+        opened = source.circuit_opened_at
+        if opened is None:
+            source.circuit_state = CircuitStateEnum.HALF_OPEN
+            source.circuit_half_opened_at = datetime.now(timezone.utc)
+            return True
+
+        elapsed = (datetime.now(timezone.utc) - opened).total_seconds()
+        if elapsed >= 300:
+            source.circuit_state = CircuitStateEnum.HALF_OPEN
+            source.circuit_half_opened_at = datetime.now(timezone.utc)
+            source.health_status = HealthStatusEnum.WARNING
+            return True
+
+        return False
+
+    @staticmethod
+    def record_collection_success(source: SourceModel) -> None:
+        source.failure_count = 0
+        source.consecutive_successes = (getattr(source, "consecutive_successes", None) or 0) + 1
+        source.circuit_state = CircuitStateEnum.CLOSED
+        source.circuit_opened_at = None
+        source.circuit_half_opened_at = None
+        source.health_status = HealthStatusEnum.HEALTHY
+
+    @staticmethod
+    def record_collection_failure(source: SourceModel) -> bool:
+        """Record a failure and return True exactly when the circuit transitions to OPEN."""
+        source.failure_count = (getattr(source, "failure_count", None) or 0) + 1
+        source.consecutive_successes = 0
+        tripped = source.failure_count >= 5 and source.circuit_state != CircuitStateEnum.OPEN
+        if tripped:
+            source.circuit_state = CircuitStateEnum.OPEN
+            source.circuit_opened_at = datetime.now(timezone.utc)
+            source.circuit_half_opened_at = None
+            source.health_status = HealthStatusEnum.FAILING
+        else:
+            source.health_status = HealthStatusEnum.WARNING
+        return tripped

@@ -1,5 +1,6 @@
 from functools import lru_cache
 from typing import List
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -36,6 +37,7 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://localhost:5173",
         "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
     ]
 
     # Disposable Email Blocking
@@ -48,7 +50,7 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from_email: str = ""
     smtp_from_name: str = "Nexora"
-    frontend_url: str = "http://localhost:3000"
+    frontend_url: str = "http://localhost:5173"
 
     # Gemini discovery fallback. Discovery continues with deterministic extraction
     # when this key is not configured.
@@ -57,6 +59,18 @@ class Settings(BaseSettings):
     # overridable with GEMINI_MODEL for projects with different availability.
     gemini_model: str = "gemini-3.6-flash"
     gemini_discovery_enabled: bool = True
+
+    # Background monitoring schedule
+    scheduled_collection_interval_minutes: int = 60
+
+    @model_validator(mode="after")
+    def validate_runtime_security(self) -> "Settings":
+        if self.environment.lower() in {"prod", "production"}:
+            if len(self.jwt_secret_key) < 32 or self.jwt_secret_key == "nexora_super_secret_jwt_key_change_in_production_32bytes_min":
+                raise ValueError("JWT_SECRET_KEY must be a unique random secret of at least 32 characters in production.")
+            if "*" in self.allowed_hosts:
+                raise ValueError("ALLOWED_HOSTS must be explicit in production.")
+        return self
 
     model_config = SettingsConfigDict(
         env_file=".env",

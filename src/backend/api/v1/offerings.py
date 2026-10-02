@@ -24,6 +24,7 @@ from backend.core.deps import (
     get_current_user_claims,
     require_admin,
     require_analyst,
+    require_reader,
 )
 from backend.db.session import get_db
 from backend.models.enums import OfferingTypeEnum
@@ -54,7 +55,7 @@ router = APIRouter()
     "/fields",
     response_model=List[DynamicFieldDefinitionRead],
     summary="List Dynamic Field Definitions",
-    dependencies=[Depends(require_analyst)],
+    dependencies=[Depends(require_reader)],
 )
 async def list_dynamic_fields(
     auth_ctx: Annotated[
@@ -189,7 +190,7 @@ async def bulk_archive_offerings(
 @router.get(
     "/export",
     summary="Export Catalog (CSV or JSON)",
-    dependencies=[Depends(require_analyst)],
+    dependencies=[Depends(require_reader)],
 )
 async def export_catalog(
     auth_ctx: Annotated[
@@ -261,7 +262,7 @@ async def create_offering(
     "",
     response_model=OfferingPaginationResponse,
     summary="List & Filter Offerings",
-    dependencies=[Depends(require_analyst)],
+    dependencies=[Depends(require_reader)],
 )
 async def list_offerings(
     auth_ctx: Annotated[

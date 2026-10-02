@@ -32,6 +32,7 @@ from backend.schemas.client import (
     LoginRequest,
     RegisterRequest,
     ResetPasswordRequest,
+    ResendVerificationRequest,
     TokenResponse,
     UserRead,
 )
@@ -134,6 +135,40 @@ class AuthService:
         )
 
         return user
+
+    @classmethod
+    async def resend_verification_email(
+        cls,
+        session: AsyncSession,
+        data: ResendVerificationRequest,
+    ) -> None:
+        clean_email = validate_and_normalize_email(data.email)
+        result = await session.execute(
+            select(UserModel).where(UserModel.email == clean_email)
+        )
+        user = result.scalar_one_or_none()
+
+        if not user or not user.is_active or user.email_verified:
+            return
+
+        resend_token = generate_secure_token(32)
+        await TokenSessionStore.store_email_verification_token(
+            token_hash=hash_token(resend_token),
+            user_id=str(user.id),
+            email=clean_email,
+        )
+        await AuditService.log_security_event(
+            session=session,
+            action="VERIFICATION_EMAIL_RESEND",
+            client_id=user.client_id,
+            user_id=user.id,
+            changes={"email": clean_email},
+        )
+        await send_verification_email_async(
+            clean_email,
+            resend_token,
+            user.full_name,
+        )
 
     @classmethod
     async def verify_email(

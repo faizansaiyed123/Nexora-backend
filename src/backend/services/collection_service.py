@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 import re
 import time
+import asyncio
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 from urllib.parse import urljoin
+
+from backend.services.url_security import SecurityValidationError, UrlSecurityService
 
 import httpx
 from bs4 import BeautifulSoup
@@ -105,10 +108,17 @@ class CollectionService:
         url: str,
         timeout: float = DEFAULT_TIMEOUT,
         headers: Optional[dict[str, str]] = None,
+        custom_selectors: Optional[dict[str, Any]] = None,
+        max_retries: int = 0,
     ) -> CollectionResult:
         """
         Fetch URL and perform generic extraction.
         """
+
+        try:
+            current_url = UrlSecurityService.validate_url(url)
+        except SecurityValidationError as exc:
+            return CollectionResult(False, url, None, 0, None, None, None, {}, extraction_status="SECURITY_BLOCKED", error=str(exc))
 
         request_headers = self.DEFAULT_HEADERS.copy()
 
@@ -118,21 +128,68 @@ class CollectionService:
         start_time = time.perf_counter()
 
         try:
+            current_attempt = 0
+            response = None
             async with httpx.AsyncClient(
                 timeout=timeout,
-                follow_redirects=True,
+                follow_redirects=False,
             ) as client:
+                while current_attempt <= max(0, max_retries):
+                    response = None
+                    current_url = UrlSecurityService.validate_url(url)
+                    try:
+                        for _ in range(6):
+                            response = await client.get(
+                                current_url,
+                                headers=request_headers,
+                            )
+                            if response.status_code not in {301, 302, 303, 307, 308}:
+                                break
+                            location = response.headers.get("location")
+                            if not location:
+                                break
+                            try:
+                                current_url = UrlSecurityService.validate_url(
+                                    urljoin(current_url, location)
+                                )
+                            except SecurityValidationError as exc:
+                                return CollectionResult(
+                                    success=False,
+                                    url=current_url,
+                                    status_code=response.status_code,
+                                    response_time_ms=int(
+                                        (time.perf_counter() - start_time) * 1000
+                                    ),
+                                    price=None,
+                                    currency=None,
+                                    availability=None,
+                                    attributes={"redirect_blocked": True},
+                                    extraction_status="SECURITY_BLOCKED",
+                                    error=str(exc),
+                                )
 
-                response = await client.get(
-                    url,
-                    headers=request_headers,
-                )
+                        if response is None:
+                            raise httpx.HTTPError("No HTTP response received")
 
+                        retryable_status = response.status_code in {408, 425, 429, 500, 502, 503, 504}
+                        if retryable_status and current_attempt < max(0, max_retries):
+                            current_attempt += 1
+                            await asyncio.sleep(min(8.0, 0.5 * (2 ** (current_attempt - 1))))
+                            continue
+
+                        break
+                    except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError, httpx.WriteError, httpx.RemoteProtocolError) as exc:
+                        if current_attempt >= max(0, max_retries):
+                            raise
+                        current_attempt += 1
+                        await asyncio.sleep(min(8.0, 0.5 * (2 ** (current_attempt - 1))))
+
+                final_url = current_url
             response_time_ms = int(
                 (time.perf_counter() - start_time) * 1000
             )
 
-            final_url = str(response.url)
+            final_url = current_url
 
             content_type = response.headers.get(
                 "content-type"
@@ -237,6 +294,7 @@ class CollectionService:
                 soup=soup,
                 html=raw_payload,
                 base_url=final_url,
+                custom_selectors=custom_selectors,
             )
 
             extraction_status = (
@@ -427,6 +485,44 @@ class CollectionService:
                 error=str(exc),
             )
 
+    def from_rendered_html(
+        self,
+        html: str,
+        url: str,
+        *,
+        response_time_ms: int = 0,
+        status_code: int = 200,
+        custom_selectors: Optional[dict[str, Any]] = None,
+    ) -> CollectionResult:
+        """Extract competitive data from HTML already rendered by a browser."""
+        soup = BeautifulSoup(html, "html.parser")
+        extracted = self._extract_html(
+            soup=soup,
+            html=html,
+            base_url=url,
+            custom_selectors=custom_selectors,
+        )
+        extraction_status = self._determine_extraction_status(extracted)
+        success = extracted["price"] is not None or extracted["availability"] not in (None, "UNKNOWN")
+        return CollectionResult(
+            success=success,
+            url=url,
+            status_code=status_code,
+            response_time_ms=response_time_ms,
+            price=extracted["price"],
+            currency=extracted["currency"],
+            availability=extracted["availability"],
+            attributes={
+                **extracted["attributes"],
+                "collection_engine": "PLAYWRIGHT_BROWSER",
+            },
+            raw_payload=html,
+            content_type="text/html",
+            content_length=len(html.encode("utf-8")),
+            extraction_status=extraction_status,
+            error=None if success else "Rendered page contained no useful competitive data.",
+        )
+
     # =========================================================
     # HTML EXTRACTION
     # =========================================================
@@ -436,6 +532,7 @@ class CollectionService:
         soup: BeautifulSoup,
         html: str,
         base_url: str,
+        custom_selectors: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
 
         price: Optional[Decimal] = None
@@ -560,7 +657,8 @@ class CollectionService:
 
         html_result = (
             self._extract_from_html_selectors(
-                soup
+                soup,
+                custom_selectors=custom_selectors,
             )
         )
 
@@ -1211,6 +1309,7 @@ class CollectionService:
     def _extract_from_html_selectors(
         self,
         soup: BeautifulSoup,
+        custom_selectors: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
 
         price: Optional[Decimal] = None
@@ -1223,7 +1322,12 @@ class CollectionService:
         # PRICE
         # -----------------------------------------------------
 
+        configured_price = custom_selectors.get("price_selector") if isinstance(custom_selectors, dict) else None
+        configured_currency = custom_selectors.get("currency_selector") if isinstance(custom_selectors, dict) else None
+        configured_availability = custom_selectors.get("availability_selector") if isinstance(custom_selectors, dict) else None
+
         price_selectors = [
+            *([str(configured_price)] if configured_price else []),
             '[itemprop="price"]',
             "[data-price]",
             "[data-product-price]",
@@ -1275,9 +1379,7 @@ class CollectionService:
         # CURRENCY
         # -----------------------------------------------------
 
-        currency_element = soup.select_one(
-            '[itemprop="priceCurrency"]'
-        )
+        currency_element = soup.select_one(str(configured_currency)) if configured_currency else soup.select_one('[itemprop="priceCurrency"]')
 
         if currency_element:
 
@@ -1301,6 +1403,7 @@ class CollectionService:
         # -----------------------------------------------------
 
         availability_selectors = [
+            *([str(configured_availability)] if configured_availability else []),
             '[itemprop="availability"]',
             '[class*="availability"]',
             '[id*="availability"]',
@@ -1901,11 +2004,7 @@ class CollectionService:
         ):
             return "COMPLETE"
 
-        if (
-            price is not None
-            or currency is not None
-            or availability is not None
-        ):
+        if price is not None or availability not in (None, "UNKNOWN"):
             return "PARTIAL"
 
         return "NO_DATA"

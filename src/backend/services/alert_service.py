@@ -151,6 +151,7 @@ class AlertService:
         previous_availability: Optional[AvailabilityStatusEnum],
         current_availability: AvailabilityStatusEnum,
         percentage_difference: Optional[float],
+        circuit_tripped: bool = False,
     ) -> int:
         result = await db.execute(
             select(AlertRuleModel)
@@ -182,6 +183,7 @@ class AlertService:
                 previous_availability=previous_availability,
                 current_availability=current_availability,
                 percentage_difference=percentage_difference,
+                circuit_tripped=circuit_tripped,
             )
             if event is None:
                 continue
@@ -228,8 +230,19 @@ class AlertService:
         previous_availability: Optional[AvailabilityStatusEnum],
         current_availability: AvailabilityStatusEnum,
         percentage_difference: Optional[float],
+        circuit_tripped: bool = False,
     ) -> Optional[tuple[Optional[float], str, str, dict[str, Any]]]:
         threshold = abs(threshold) if threshold is not None else None
+
+        if alert_type == AlertTypeEnum.CIRCUIT_BREAKER_TRIPPED:
+            if not circuit_tripped:
+                return None
+            return (
+                None,
+                "Competitor source circuit breaker tripped",
+                "A competitor collection source crossed the failure threshold and was opened.",
+                {"event": "CIRCUIT_BREAKER_TRIPPED"},
+            )
 
         if alert_type == AlertTypeEnum.PRICE_CHANGE:
             if previous_price is None or current_price is None or previous_price == current_price:

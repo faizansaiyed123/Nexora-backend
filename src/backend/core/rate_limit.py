@@ -70,39 +70,44 @@ class TokenSessionStore:
     @classmethod
     async def store_email_verification_token(cls, token_hash: str, user_id: str, email: str, ttl_seconds: int = 86400) -> None:
         redis = await get_redis_client()
-        if redis:
-            try:
-                import json
-                payload = json.dumps({"user_id": user_id, "email": email})
-                await redis.setex(f"email_verify:{token_hash}", ttl_seconds, payload)
-            except Exception as e:
-                logger.error(f"Failed to store email verification token: {e}")
+        if not redis:
+            raise RuntimeError("Redis is required for email verification tokens.")
+        try:
+            import json
+            payload = json.dumps({"user_id": user_id, "email": email})
+            await redis.setex(f"email_verify:{token_hash}", ttl_seconds, payload)
+        except Exception as e:
+            logger.error(f"Failed to store email verification token: {e}")
+            raise
 
     @classmethod
     async def get_and_consume_email_verification_token(cls, token_hash: str) -> Optional[dict]:
         redis = await get_redis_client()
-        if redis:
-            try:
-                import json
-                key = f"email_verify:{token_hash}"
-                raw = await redis.get(key)
-                if raw:
-                    await redis.delete(key)
-                    return json.loads(raw)
-            except Exception as e:
-                logger.error(f"Failed to consume email verification token: {e}")
+        if not redis:
+            return None
+        try:
+            import json
+            key = f"email_verify:{token_hash}"
+            raw = await redis.get(key)
+            if raw:
+                await redis.delete(key)
+                return json.loads(raw)
+        except Exception as e:
+            logger.error(f"Failed to consume email verification token: {e}")
         return None
 
     @classmethod
     async def store_password_reset_token(cls, token_hash: str, user_id: str, email: str, ttl_seconds: int = 900) -> None:
         redis = await get_redis_client()
-        if redis:
-            try:
-                import json
-                payload = json.dumps({"user_id": user_id, "email": email})
-                await redis.setex(f"pwd_reset:{token_hash}", ttl_seconds, payload)
-            except Exception as e:
-                logger.error(f"Failed to store password reset token: {e}")
+        if not redis:
+            raise RuntimeError("Redis is required for password reset tokens.")
+        try:
+            import json
+            payload = json.dumps({"user_id": user_id, "email": email})
+            await redis.setex(f"pwd_reset:{token_hash}", ttl_seconds, payload)
+        except Exception as e:
+            logger.error(f"Failed to store password reset token: {e}")
+            raise
 
     @classmethod
     async def get_and_consume_password_reset_token(cls, token_hash: str) -> Optional[dict]:
@@ -128,11 +133,13 @@ class TokenSessionStore:
         ttl_seconds: int = 604800,
     ) -> None:
         redis = await get_redis_client()
-        if redis:
-            try:
-                await redis.setex(f"refresh:{user_id}:{session_id}", ttl_seconds, token_hash)
-            except Exception as e:
-                logger.error(f"Failed to store refresh session: {e}")
+        if not redis:
+            raise RuntimeError("Redis is required for refresh sessions.")
+        try:
+            await redis.setex(f"refresh:{user_id}:{session_id}", ttl_seconds, token_hash)
+        except Exception as e:
+            logger.error(f"Failed to store refresh session: {e}")
+            raise
 
     @classmethod
     async def validate_and_rotate_refresh_session(
@@ -145,7 +152,7 @@ class TokenSessionStore:
     ) -> bool:
         redis = await get_redis_client()
         if not redis:
-            return True
+            return False
 
         try:
             key = f"refresh:{user_id}:{session_id}"
@@ -167,11 +174,13 @@ class TokenSessionStore:
     @classmethod
     async def revoke_user_sessions(cls, user_id: str) -> None:
         redis = await get_redis_client()
-        if redis:
-            try:
-                pattern = f"refresh:{user_id}:*"
-                keys = await redis.keys(pattern)
-                if keys:
-                    await redis.delete(*keys)
-            except Exception as e:
-                logger.error(f"Failed to revoke sessions: {e}")
+        if not redis:
+            raise RuntimeError("Redis is required to revoke refresh sessions.")
+        try:
+            pattern = f"refresh:{user_id}:*"
+            keys = await redis.keys(pattern)
+            if keys:
+                await redis.delete(*keys)
+        except Exception as e:
+            logger.error(f"Failed to revoke sessions: {e}")
+            raise

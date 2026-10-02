@@ -3,6 +3,7 @@ import uvicorn
 
 
 def main() -> None:
+    os.environ.setdefault("PYTHONPATH", "/app/src")
     uvicorn.run(
         "backend.main:app",
         host=os.getenv("HOST", "0.0.0.0"),

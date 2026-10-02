@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - "feat/**"
+      - "audit/**"
   pull_request:
     branches:
       - main
@@ -37,7 +38,7 @@ jobs:
         env:
           DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/nexora
           REDIS_URL: redis://localhost:6379/0
-      - run: pytest -q
+      - run: PYTHONPATH=src pytest -q
         env:
           DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/nexora
           REDIS_URL: redis://localhost:6379/0
