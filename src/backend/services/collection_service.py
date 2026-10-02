@@ -503,7 +503,7 @@ class CollectionService:
             custom_selectors=custom_selectors,
         )
         extraction_status = self._determine_extraction_status(extracted)
-        success = price is not None or availability not in (None, "UNKNOWN")
+        success = extracted["price"] is not None or extracted["availability"] not in (None, "UNKNOWN")
         return CollectionResult(
             success=success,
             url=url,
