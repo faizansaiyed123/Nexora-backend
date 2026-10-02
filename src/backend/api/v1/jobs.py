@@ -29,7 +29,7 @@ async def list_jobs(
     return result.scalars().all()
 
 
-@router.get("/{job_id}", response_model=JobRead, dependencies=[Depends(require_analyst)])
+@router.get("/{job_id}", response_model=JobRead, dependencies=[Depends(require_reader)])
 async def get_job(
     job_id: UUID,
     auth_ctx: Annotated[AuthenticatedUserContext, Depends(get_current_user_claims)],
