@@ -307,7 +307,7 @@ class SourceService:
     @staticmethod
     def record_collection_success(source: SourceModel) -> None:
         source.failure_count = 0
-        source.consecutive_successes += 1
+        source.consecutive_successes = (getattr(source, "consecutive_successes", None) or 0) + 1
         source.circuit_state = CircuitStateEnum.CLOSED
         source.circuit_opened_at = None
         source.circuit_half_opened_at = None
@@ -316,7 +316,7 @@ class SourceService:
     @staticmethod
     def record_collection_failure(source: SourceModel) -> bool:
         """Record a failure and return True exactly when the circuit transitions to OPEN."""
-        source.failure_count += 1
+        source.failure_count = (getattr(source, "failure_count", None) or 0) + 1
         source.consecutive_successes = 0
         tripped = source.failure_count >= 5 and source.circuit_state != CircuitStateEnum.OPEN
         if tripped:
