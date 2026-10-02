@@ -14,6 +14,7 @@ from backend.core.deps import (
     AuthenticatedUserContext,
     require_admin,
     require_analyst,
+    require_reader,
 )
 from backend.db.session import get_db
 from backend.models.enums import RoleEnum
@@ -73,7 +74,7 @@ async def run_website_discovery(
 async def get_discovery_job(
     job_id: Annotated[uuid.UUID, Path(description="Discovery Job UUID", examples=["123e4567-e89b-12d3-a456-426614174000"])],
     db: Annotated[AsyncSession, Depends(get_db)],
-    auth_ctx: Annotated[AuthenticatedUserContext, Depends(require_analyst)],
+    auth_ctx: Annotated[AuthenticatedUserContext, Depends(require_reader)],
 ) -> DiscoveryJobResponse:
     return await WebsiteDiscoveryService.get_discovery_job(
         db=db,
