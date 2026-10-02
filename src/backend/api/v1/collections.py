@@ -261,7 +261,8 @@ async def run_collection(
             else:
                 current_price = collection_result.price
                 snapshot.previous_price = snapshot.current_price
-                snapshot.current_price = current_price
+                if current_price is not None:
+                    snapshot.current_price = current_price
 
                 if (
                     previous_price is not None
