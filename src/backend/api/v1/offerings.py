@@ -262,7 +262,7 @@ async def create_offering(
     "",
     response_model=OfferingPaginationResponse,
     summary="List & Filter Offerings",
-    dependencies=[Depends(require_analyst)],
+    dependencies=[Depends(require_reader)],
 )
 async def list_offerings(
     auth_ctx: Annotated[

@@ -68,7 +68,7 @@ async def delete_rule(
     return None
 
 
-@router.get("/logs", response_model=list[AlertLogRead], dependencies=[Depends(require_analyst)])
+@router.get("/logs", response_model=list[AlertLogRead], dependencies=[Depends(require_reader)])
 async def list_logs(
     auth_ctx: Annotated[AuthenticatedUserContext, Depends(get_current_user_claims)],
     db: Annotated[AsyncSession, Depends(get_db)],
