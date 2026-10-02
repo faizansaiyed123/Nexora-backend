@@ -27,6 +27,7 @@ from backend.models.enums import (
 from backend.services.alert_service import AlertService
 from backend.collectors.browser import render_page
 from backend.services.collection_service import CollectionService
+from backend.services.source_service import SourceService
 
 
 router = APIRouter()
@@ -106,6 +107,12 @@ async def run_collection(
         if source
         else None
     )
+
+    if not SourceService.before_collection(source):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Collection source is temporarily unavailable while its circuit breaker is open.",
+        )
 
     # ---------------------------------------------------------
     # 2. Create collection job
@@ -338,7 +345,9 @@ async def run_collection(
                 "position": position,
             }
 
+        circuit_tripped = False
         if collection_result.success:
+            SourceService.record_collection_success(source)
             await AlertService.evaluate_and_trigger(
                 session,
                 client_id=auth_ctx.client_id,
@@ -353,6 +362,7 @@ async def run_collection(
                 previous_availability=previous_availability,
                 current_availability=availability,
                 percentage_difference=snapshot.percentage_difference,
+                circuit_tripped=circuit_tripped,
             )
 
         # -----------------------------------------------------
@@ -369,6 +379,7 @@ async def run_collection(
             job.error_message = None
 
         else:
+            circuit_tripped = SourceService.record_collection_failure(source)
 
             job.status = JobStatusEnum.FAILED
             job.total_items_processed = 1
