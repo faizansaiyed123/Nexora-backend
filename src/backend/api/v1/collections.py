@@ -164,6 +164,7 @@ async def run_collection(
             timeout=timeout,
             headers=headers if isinstance(headers, dict) else None,
             custom_selectors=selectors if isinstance(selectors, dict) else None,
+            max_retries=config.max_retries if config else 0,
         )
 
         if configuration and configuration.requires_javascript:
