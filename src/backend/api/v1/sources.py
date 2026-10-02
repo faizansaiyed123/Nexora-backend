@@ -77,7 +77,7 @@ async def list_sources(
 @router.get(
     "/{source_id}",
     response_model=SourceRead,
-    dependencies=[Depends(require_analyst)],
+    dependencies=[Depends(require_reader)],
 )
 async def get_source(
     source_id: uuid.UUID,
