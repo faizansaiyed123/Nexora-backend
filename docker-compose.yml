@@ -40,10 +40,42 @@ services:
       CORS_ORIGINS: '["http://localhost:5173","http://localhost:3000"]'
     ports:
       - "8000:8000"
+    healthcheck:
+      test:
+        ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/health', timeout=2)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+
+  worker:
+    build: .
+    container_name: nexora-worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/nexora
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: development
+    command: ["celery", "-A", "backend.workers.celery_app.celery_app", "worker", "--loglevel=INFO"]
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  beat:
+    build: .
+    container_name: nexora-beat
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/nexora
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: development
+    command: ["celery", "-A", "backend.workers.celery_app.celery_app", "beat", "--loglevel=INFO"]
+    depends_on:
+      backend:
         condition: service_healthy
 
 volumes:
