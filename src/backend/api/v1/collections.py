@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from backend.core.deps import AuthenticatedUserContext, get_current_user_claims
+from backend.core.deps import AuthenticatedUserContext, get_current_user_claims, require_analyst
 from backend.core.rate_limit import DistributedRateLimiter
 from backend.db.session import get_db
 from backend.models.competitor import (
@@ -36,6 +36,7 @@ router = APIRouter()
     "/run",
     response_model=dict,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_analyst)],
 )
 async def run_collection(
     offering_match_id: UUID,
