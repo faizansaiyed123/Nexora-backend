@@ -13,6 +13,7 @@ from backend.core.deps import (
     get_current_user_claims,
     require_admin,
     require_analyst,
+    require_reader,
 )
 from backend.db.session import get_db
 from backend.schemas.competitor import (
@@ -54,7 +55,7 @@ async def create_source(
 @router.get(
     "",
     response_model=List[SourceRead],
-    dependencies=[Depends(require_analyst)],
+    dependencies=[Depends(require_reader)],
 )
 async def list_sources(
     auth_ctx: Annotated[
