@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.deps import get_current_user_db, get_db
+from backend.core.deps import get_current_user_db, get_db, require_admin
 from backend.core.config import get_settings
 from backend.core.rate_limit import DistributedRateLimiter
 from backend.models.client import ClientModel, UserModel
@@ -240,6 +240,7 @@ async def get_client_profile(
 @router.patch(
     "/profile",
     response_model=ClientProfileRead,
+    dependencies=[Depends(require_admin)],
 )
 async def update_client_profile(
     data: ClientProfileUpdate,
