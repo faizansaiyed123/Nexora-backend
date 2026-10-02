@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+from backend.services.url_security import SecurityValidationError, UrlSecurityService
+
 logger = logging.getLogger("nexora.browser")
 
 
@@ -16,8 +18,19 @@ async def render_page(url: str, timeout_seconds: int = 20) -> Optional[str]:
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch(headless=True)
             try:
+                safe_url = UrlSecurityService.validate_url(url)
                 page = await browser.new_page()
-                await page.goto(url, wait_until="networkidle", timeout=timeout_seconds * 1000)
+
+                async def guard_route(route) -> None:
+                    try:
+                        UrlSecurityService.validate_url(route.request.url)
+                    except SecurityValidationError:
+                        await route.abort()
+                        return
+                    await route.continue_()
+
+                await page.route("**/*", guard_route)
+                await page.goto(safe_url, wait_until="networkidle", timeout=timeout_seconds * 1000)
                 return await page.content()
             finally:
                 await browser.close()
