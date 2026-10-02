@@ -14,7 +14,7 @@ from backend.schemas.observation import JobRead
 router = APIRouter()
 
 
-@router.get("", response_model=list[JobRead], dependencies=[Depends(require_analyst)])
+@router.get("", response_model=list[JobRead], dependencies=[Depends(require_reader)])
 async def list_jobs(
     auth_ctx: Annotated[AuthenticatedUserContext, Depends(get_current_user_claims)],
     session: Annotated[AsyncSession, Depends(get_db)],
