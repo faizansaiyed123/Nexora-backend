@@ -17,6 +17,7 @@ from backend.models.competitor import (
     SourceConfigurationModel,
     SourceModel,
 )
+from backend.services.url_security import UrlSecurityService
 from backend.schemas.competitor import (
     SourceConfigurationUpdate,
     SourceCreate,
@@ -51,11 +52,14 @@ class SourceService:
                 code="COMPETITOR_NOT_FOUND",
             )
 
+        # Validate before persistence so collection can never target internal hosts.
+        safe_base_url = UrlSecurityService.validate_url(data.base_url)
+
         # Create source.
         source = SourceModel(
             competitor_id=data.competitor_id,
             name=data.name,
-            base_url=data.base_url,
+            base_url=safe_base_url,
             source_type=data.source_type,
             collection_method=data.collection_method,
         )
@@ -164,6 +168,9 @@ class SourceService:
         update_data = data.model_dump(
             exclude_unset=True
         )
+
+        if "base_url" in update_data:
+            update_data["base_url"] = UrlSecurityService.validate_url(update_data["base_url"])
 
         for field, value in update_data.items():
             setattr(source, field, value)
