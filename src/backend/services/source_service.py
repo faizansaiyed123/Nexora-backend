@@ -302,7 +302,7 @@ class SourceService:
         """Record a failure and return True exactly when the circuit transitions to OPEN."""
         source.failure_count += 1
         source.consecutive_successes = 0
-        tripped = source.failure_count >= 5
+        tripped = source.failure_count >= 5 and source.circuit_state != CircuitStateEnum.OPEN
         if tripped:
             source.circuit_state = CircuitStateEnum.OPEN
             source.circuit_opened_at = datetime.now(timezone.utc)
