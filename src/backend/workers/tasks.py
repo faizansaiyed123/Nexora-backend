@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from backend.db.session import AsyncSessionLocal
 from backend.models.competitor import OfferingMatchModel, SourceModel
+from backend.models.offering import OfferingModel
 from backend.models.observation import JobModel
 from backend.models.enums import JobStatusEnum, JobTypeEnum
 from backend.services.collection_runner import CollectionRunner
@@ -22,19 +23,13 @@ async def _enqueue_monitored_match_jobs() -> list[str]:
                 selectinload(OfferingMatchModel.offering),
                 selectinload(OfferingMatchModel.source).selectinload(SourceModel.competitor),
             )
-            .join(OfferingMatchModel.offering)
-            .join(OfferingMatchModel.source)
             .where(
                 OfferingMatchModel.is_active.is_(True),
                 OfferingMatchModel.offering.has(
-                    __import__("backend.models.offering", fromlist=["OfferingModel"]).OfferingModel.is_monitored.is_(True)
+                    (OfferingModel.is_monitored.is_(True))
+                    & (OfferingModel.is_archived.is_(False))
                 ),
-                OfferingMatchModel.offering.has(
-                    __import__("backend.models.offering", fromlist=["OfferingModel"]).OfferingModel.is_archived.is_(False)
-                ),
-                OfferingMatchModel.source.has(
-                    SourceModel.is_active.is_(True)
-                ),
+                OfferingMatchModel.source.has(SourceModel.is_active.is_(True)),
             )
         )
         matches = result.scalars().all()
