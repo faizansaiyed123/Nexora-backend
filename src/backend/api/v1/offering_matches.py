@@ -81,7 +81,7 @@ async def list_offering_matches(
 @router.get(
     "/{match_id}",
     response_model=OfferingMatchRead,
-    dependencies=[Depends(require_analyst)],
+    dependencies=[Depends(require_reader)],
 )
 async def get_offering_match(
     match_id: uuid.UUID,
