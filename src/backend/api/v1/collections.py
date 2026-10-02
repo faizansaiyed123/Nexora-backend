@@ -1,3 +1,4 @@
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -5,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from backend.core.deps import AuthenticatedUserContext, get_current_user_claims
 from backend.db.session import get_db
 from backend.models.competitor import (
     OfferingMatchModel,
@@ -20,6 +22,7 @@ from backend.models.enums import (
     JobStatusEnum,
     JobTypeEnum,
 )
+from backend.services.alert_service import AlertService
 from backend.services.collection_service import CollectionService
 
 
@@ -33,7 +36,8 @@ router = APIRouter()
 )
 async def run_collection(
     offering_match_id: UUID,
-    session: AsyncSession = Depends(get_db),
+    session: Annotated[AsyncSession, Depends(get_db)],
+    auth_ctx: Annotated[AuthenticatedUserContext, Depends(get_current_user_claims)],
 ):
     """
     Collect the current state of an offering match.
@@ -73,7 +77,11 @@ async def run_collection(
 
     offering_match = result.scalar_one_or_none()
 
-    if offering_match is None:
+    if (
+        offering_match is None
+        or offering_match.offering is None
+        or offering_match.offering.client_id != auth_ctx.client_id
+    ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Offering match not found.",
@@ -190,6 +198,8 @@ async def run_collection(
         # -----------------------------------------------------
 
         price_movement = "FIRST_OBSERVATION"
+        previous_price = snapshot.current_price if snapshot is not None else None
+        previous_availability = snapshot.current_availability if snapshot is not None else None
 
         if snapshot is None:
 
@@ -207,7 +217,6 @@ async def run_collection(
 
         else:
 
-            previous_price = snapshot.current_price
             current_price = collection_result.price
 
             snapshot.previous_price = previous_price
@@ -303,6 +312,23 @@ async def run_collection(
                 ),
                 "position": position,
             }
+
+        if collection_result.success:
+            await AlertService.evaluate_and_trigger(
+                session,
+                client_id=auth_ctx.client_id,
+                offering_id=offering.id if offering else None,
+                offering_match_id=offering_match_id_val,
+                offering_name=offering.name if offering else "Offering",
+                competitor_name=competitor.name if competitor else "Competitor",
+                source_name=source.name if source else "Source",
+                client_price=offering.base_price if offering else None,
+                previous_price=previous_price,
+                current_price=collection_result.price,
+                previous_availability=previous_availability,
+                current_availability=availability,
+                percentage_difference=snapshot.percentage_difference,
+            )
 
         # -----------------------------------------------------
         # 9. Update job
