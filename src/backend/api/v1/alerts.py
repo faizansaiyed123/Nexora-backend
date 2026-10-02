@@ -4,7 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.deps import AuthenticatedUserContext, get_current_user_claims, require_admin, require_analyst
+from backend.core.deps import AuthenticatedUserContext, get_current_user_claims, require_admin, require_analyst, require_reader
 from backend.db.session import get_db
 from backend.schemas.alert import AlertLogRead, AlertRuleCreate, AlertRuleRead, AlertRuleUpdate
 from backend.services.alert_service import AlertService
