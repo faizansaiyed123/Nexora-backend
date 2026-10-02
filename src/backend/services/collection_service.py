@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import time
+import asyncio
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
@@ -108,6 +109,7 @@ class CollectionService:
         timeout: float = DEFAULT_TIMEOUT,
         headers: Optional[dict[str, str]] = None,
         custom_selectors: Optional[dict[str, Any]] = None,
+        max_retries: int = 0,
     ) -> CollectionResult:
         """
         Fetch URL and perform generic extraction.
@@ -126,36 +128,59 @@ class CollectionService:
         start_time = time.perf_counter()
 
         try:
+            current_attempt = 0
+            response = None
             async with httpx.AsyncClient(
                 timeout=timeout,
                 follow_redirects=False,
             ) as client:
-                response = None
-                for _ in range(6):
-                    response = await client.get(current_url, headers=request_headers)
-                    if response.status_code not in {301, 302, 303, 307, 308}:
-                        break
-                    location = response.headers.get("location")
-                    if not location:
-                        break
-                    try:
-                        current_url = UrlSecurityService.validate_url(urljoin(current_url, location))
-                    except SecurityValidationError as exc:
-                        return CollectionResult(
-                            success=False,
-                            url=current_url,
-                            status_code=response.status_code,
-                            response_time_ms=int((time.perf_counter() - start_time) * 1000),
-                            price=None,
-                            currency=None,
-                            availability=None,
-                            attributes={"redirect_blocked": True},
-                            extraction_status="SECURITY_BLOCKED",
-                            error=str(exc),
-                        )
-                if response is None:
-                    raise httpx.HTTPError("No HTTP response received")
+                while current_attempt <= max(0, max_retries):
+                    response = None
+                    current_url = UrlSecurityService.validate_url(url)
 
+                    for _ in range(6):
+                        response = await client.get(
+                            current_url,
+                            headers=request_headers,
+                        )
+                        if response.status_code not in {301, 302, 303, 307, 308}:
+                            break
+                        location = response.headers.get("location")
+                        if not location:
+                            break
+                        try:
+                            current_url = UrlSecurityService.validate_url(
+                                urljoin(current_url, location)
+                            )
+                        except SecurityValidationError as exc:
+                            return CollectionResult(
+                                success=False,
+                                url=current_url,
+                                status_code=response.status_code,
+                                response_time_ms=int(
+                                    (time.perf_counter() - start_time) * 1000
+                                ),
+                                price=None,
+                                currency=None,
+                                availability=None,
+                                attributes={"redirect_blocked": True},
+                                extraction_status="SECURITY_BLOCKED",
+                                error=str(exc),
+                            )
+
+                    if response is None:
+                        raise httpx.HTTPError("No HTTP response received")
+
+                    if response.status_code not in {408, 425, 429, 500, 502, 503, 504}:
+                        break
+
+                    if current_attempt >= max(0, max_retries):
+                        break
+
+                    current_attempt += 1
+                    await asyncio.sleep(min(8.0, 0.5 * (2 ** (current_attempt - 1))))
+
+                final_url = current_url
             response_time_ms = int(
                 (time.perf_counter() - start_time) * 1000
             )
