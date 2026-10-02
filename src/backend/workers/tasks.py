@@ -38,6 +38,16 @@ async def _enqueue_monitored_match_jobs() -> list[str]:
         for match in matches:
             if match.offering is None or match.source is None:
                 continue
+            existing = await session.scalar(
+                select(JobModel.id).where(
+                    JobModel.source_id == match.source_id,
+                    JobModel.job_type == JobTypeEnum.SCHEDULED_CRAWL,
+                    JobModel.status.in_([JobStatusEnum.PENDING, JobStatusEnum.RUNNING]),
+                    JobModel.meta_info["offering_match_id"].as_string() == str(match.id),
+                ).limit(1)
+            )
+            if existing is not None:
+                continue
             job = JobModel(
                 source_id=match.source_id,
                 job_type=JobTypeEnum.SCHEDULED_CRAWL,
