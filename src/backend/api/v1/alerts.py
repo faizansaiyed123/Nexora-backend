@@ -12,7 +12,7 @@ from backend.services.alert_service import AlertService
 router = APIRouter()
 
 
-@router.get("/rules", response_model=list[AlertRuleRead], dependencies=[Depends(require_analyst)])
+@router.get("/rules", response_model=list[AlertRuleRead], dependencies=[Depends(require_reader)])
 async def list_rules(
     auth_ctx: Annotated[AuthenticatedUserContext, Depends(get_current_user_claims)],
     db: Annotated[AsyncSession, Depends(get_db)],
