@@ -93,4 +93,5 @@ def require_role(allowed_roles: List[RoleEnum]) -> Callable:
 
 
 require_admin = require_role([RoleEnum.ORG_ADMIN, RoleEnum.SUPER_ADMIN])
-require_analyst = require_role([RoleEnum.ORG_ADMIN, RoleEnum.ANALYST, RoleEnum.VIEWER, RoleEnum.SUPER_ADMIN])
+require_analyst = require_role([RoleEnum.ORG_ADMIN, RoleEnum.ANALYST, RoleEnum.SUPER_ADMIN])
+require_reader = require_role([RoleEnum.ORG_ADMIN, RoleEnum.ANALYST, RoleEnum.VIEWER, RoleEnum.SUPER_ADMIN])
