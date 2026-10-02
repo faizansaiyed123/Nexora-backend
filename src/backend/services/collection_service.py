@@ -107,6 +107,7 @@ class CollectionService:
         url: str,
         timeout: float = DEFAULT_TIMEOUT,
         headers: Optional[dict[str, str]] = None,
+        custom_selectors: Optional[dict[str, Any]] = None,
     ) -> CollectionResult:
         """
         Fetch URL and perform generic extraction.
@@ -250,6 +251,7 @@ class CollectionService:
                 soup=soup,
                 html=raw_payload,
                 base_url=final_url,
+                custom_selectors=custom_selectors,
             )
 
             extraction_status = (
@@ -449,6 +451,7 @@ class CollectionService:
         soup: BeautifulSoup,
         html: str,
         base_url: str,
+        custom_selectors: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
 
         price: Optional[Decimal] = None
@@ -573,7 +576,8 @@ class CollectionService:
 
         html_result = (
             self._extract_from_html_selectors(
-                soup
+                soup,
+                custom_selectors=custom_selectors,
             )
         )
 
@@ -1224,6 +1228,7 @@ class CollectionService:
     def _extract_from_html_selectors(
         self,
         soup: BeautifulSoup,
+        custom_selectors: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
 
         price: Optional[Decimal] = None
@@ -1236,7 +1241,12 @@ class CollectionService:
         # PRICE
         # -----------------------------------------------------
 
+        configured_price = custom_selectors.get("price_selector") if isinstance(custom_selectors, dict) else None
+        configured_currency = custom_selectors.get("currency_selector") if isinstance(custom_selectors, dict) else None
+        configured_availability = custom_selectors.get("availability_selector") if isinstance(custom_selectors, dict) else None
+
         price_selectors = [
+            *([str(configured_price)] if configured_price else []),
             '[itemprop="price"]',
             "[data-price]",
             "[data-product-price]",
@@ -1288,9 +1298,7 @@ class CollectionService:
         # CURRENCY
         # -----------------------------------------------------
 
-        currency_element = soup.select_one(
-            '[itemprop="priceCurrency"]'
-        )
+        currency_element = soup.select_one(str(configured_currency)) if configured_currency else soup.select_one('[itemprop="priceCurrency"]')
 
         if currency_element:
 
@@ -1314,6 +1322,7 @@ class CollectionService:
         # -----------------------------------------------------
 
         availability_selectors = [
+            *([str(configured_availability)] if configured_availability else []),
             '[itemprop="availability"]',
             '[class*="availability"]',
             '[id*="availability"]',
