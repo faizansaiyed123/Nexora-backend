@@ -5,13 +5,15 @@ All source operations are tenant-scoped through the competitor's client_id.
 """
 
 import uuid
+from datetime import datetime, timezone
 from typing import List
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from backend.core.exceptions import ForbiddenException
+from backend.core.exceptions import ForbiddenException, ValidationException
+from backend.models.enums import CircuitStateEnum, CollectionMethodEnum, HealthStatusEnum
 from backend.models.competitor import (
     CompetitorModel,
     SourceConfigurationModel,
@@ -53,6 +55,11 @@ class SourceService:
             )
 
         # Validate before persistence so collection can never target internal hosts.
+        if data.collection_method not in {CollectionMethodEnum.HTTP_FAST, CollectionMethodEnum.PLAYWRIGHT_BROWSER}:
+            raise ValidationException(
+                "This collection method is not available in the current runtime.",
+                code="UNSUPPORTED_COLLECTION_METHOD",
+            )
         safe_base_url = UrlSecurityService.validate_url(data.base_url)
 
         # Create source.
@@ -169,6 +176,12 @@ class SourceService:
             exclude_unset=True
         )
 
+        if "collection_method" in update_data and update_data["collection_method"] not in {CollectionMethodEnum.HTTP_FAST, CollectionMethodEnum.PLAYWRIGHT_BROWSER}:
+            raise ValidationException(
+                "This collection method is not available in the current runtime.",
+                code="UNSUPPORTED_COLLECTION_METHOD",
+            )
+
         if "base_url" in update_data:
             update_data["base_url"] = UrlSecurityService.validate_url(update_data["base_url"])
 
@@ -250,3 +263,51 @@ class SourceService:
         await db.refresh(configuration)
 
         return configuration
+
+
+    @staticmethod
+    def before_collection(source: SourceModel) -> bool:
+        """Return whether a source is currently eligible for collection."""
+        if not source.is_active:
+            return False
+        if source.circuit_state != CircuitStateEnum.OPEN:
+            return True
+
+        opened = source.circuit_opened_at
+        if opened is None:
+            source.circuit_state = CircuitStateEnum.HALF_OPEN
+            source.circuit_half_opened_at = datetime.now(timezone.utc)
+            return True
+
+        elapsed = (datetime.now(timezone.utc) - opened).total_seconds()
+        if elapsed >= 300:
+            source.circuit_state = CircuitStateEnum.HALF_OPEN
+            source.circuit_half_opened_at = datetime.now(timezone.utc)
+            source.health_status = HealthStatusEnum.WARNING
+            return True
+
+        return False
+
+    @staticmethod
+    def record_collection_success(source: SourceModel) -> None:
+        source.failure_count = 0
+        source.consecutive_successes += 1
+        source.circuit_state = CircuitStateEnum.CLOSED
+        source.circuit_opened_at = None
+        source.circuit_half_opened_at = None
+        source.health_status = HealthStatusEnum.HEALTHY
+
+    @staticmethod
+    def record_collection_failure(source: SourceModel) -> bool:
+        """Record a failure and return True exactly when the circuit transitions to OPEN."""
+        source.failure_count += 1
+        source.consecutive_successes = 0
+        tripped = source.failure_count >= 5
+        if tripped:
+            source.circuit_state = CircuitStateEnum.OPEN
+            source.circuit_opened_at = datetime.now(timezone.utc)
+            source.circuit_half_opened_at = None
+            source.health_status = HealthStatusEnum.FAILING
+        else:
+            source.health_status = HealthStatusEnum.WARNING
+        return tripped
