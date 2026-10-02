@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgres:18
-    container_name: postgres-dev
+    container_name: nexora-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
@@ -19,7 +19,7 @@ services:
 
   redis:
     image: redis:latest
-    container_name: redis
+    container_name: nexora-redis
     restart: unless-stopped
     ports:
       - "6379:6379"
@@ -29,6 +29,22 @@ services:
       timeout: 3s
       retries: 10
 
+  backend:
+    build: .
+    container_name: nexora-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/nexora
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: development
+      CORS_ORIGINS: '["http://localhost:5173","http://localhost:3000"]'
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
 volumes:
   postgres_postgres_data:
-    external: true
