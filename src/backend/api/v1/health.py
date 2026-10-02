@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,4 +30,6 @@ async def health_check(session: AsyncSession = Depends(get_db)) -> dict:
         checks["redis"] = "down"
 
     overall = "ok" if all(value == "ok" for value in checks.values()) else "degraded"
+    if overall != "ok":
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail={"status": overall, "checks": checks})
     return {"status": overall, "checks": checks}
