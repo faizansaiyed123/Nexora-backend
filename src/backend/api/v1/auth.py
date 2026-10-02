@@ -21,6 +21,7 @@ from backend.schemas.client import (
     MessageResponse,
     RefreshTokenRequest,
     RegisterRequest,
+    ResendVerificationRequest,
     ResetPasswordRequest,
     TokenResponse,
     UserRead,
@@ -52,6 +53,26 @@ async def register(
 
     return MessageResponse(
         message="Registration successful. Email verification required. Please check your inbox to verify your account."
+    )
+
+@router.post("/resend-verification", response_model=MessageResponse)
+async def resend_verification(
+    request: Request,
+    data: ResendVerificationRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    client_ip = request.client.host if request.client else "127.0.0.1"
+    settings = get_settings()
+    await DistributedRateLimiter.check_rate_limit(
+        "resend_verification",
+        client_ip,
+        max_requests=settings.rate_limit_resend_verification_per_hour,
+        window_seconds=3600,
+    )
+    await AuthService.resend_verification_email(session=db, data=data)
+    await db.commit()
+    return MessageResponse(
+        message="If the account exists and still needs verification, a verification email has been sent."
     )
 
 @router.get("/verify-email", response_model=MessageResponse)
