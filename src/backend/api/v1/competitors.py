@@ -72,7 +72,7 @@ async def list_competitors(
 @router.get(
     "/{competitor_id}",
     response_model=CompetitorRead,
-    dependencies=[Depends(require_analyst)],
+    dependencies=[Depends(require_reader)],
 )
 async def get_competitor(
     competitor_id: uuid.UUID,
