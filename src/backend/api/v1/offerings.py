@@ -24,6 +24,7 @@ from backend.core.deps import (
     get_current_user_claims,
     require_admin,
     require_analyst,
+    require_reader,
 )
 from backend.db.session import get_db
 from backend.models.enums import OfferingTypeEnum
@@ -54,7 +55,7 @@ router = APIRouter()
     "/fields",
     response_model=List[DynamicFieldDefinitionRead],
     summary="List Dynamic Field Definitions",
-    dependencies=[Depends(require_analyst)],
+    dependencies=[Depends(require_reader)],
 )
 async def list_dynamic_fields(
     auth_ctx: Annotated[
