@@ -12,7 +12,7 @@ from backend.models.enums import (
     ErrorCategoryEnum,
     JobStatusEnum,
 )
-from backend.models.scraping import (
+from backend.models.observation import (
     JobModel,
     ObservationModel,
     SnapshotModel,
