@@ -442,6 +442,44 @@ class CollectionService:
                 error=str(exc),
             )
 
+    def from_rendered_html(
+        self,
+        html: str,
+        url: str,
+        *,
+        response_time_ms: int = 0,
+        status_code: int = 200,
+        custom_selectors: Optional[dict[str, Any]] = None,
+    ) -> CollectionResult:
+        """Extract competitive data from HTML already rendered by a browser."""
+        soup = BeautifulSoup(html, "html.parser")
+        extracted = self._extract_html(
+            soup=soup,
+            html=html,
+            base_url=url,
+            custom_selectors=custom_selectors,
+        )
+        extraction_status = self._determine_extraction_status(extracted)
+        success = extraction_status != "NO_DATA"
+        return CollectionResult(
+            success=success,
+            url=url,
+            status_code=status_code,
+            response_time_ms=response_time_ms,
+            price=extracted["price"],
+            currency=extracted["currency"],
+            availability=extracted["availability"],
+            attributes={
+                **extracted["attributes"],
+                "collection_engine": "PLAYWRIGHT_BROWSER",
+            },
+            raw_payload=html,
+            content_type="text/html",
+            content_length=len(html.encode("utf-8")),
+            extraction_status=extraction_status,
+            error=None if success else "Rendered page contained no useful competitive data.",
+        )
+
     # =========================================================
     # HTML EXTRACTION
     # =========================================================
