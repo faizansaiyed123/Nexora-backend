@@ -15,6 +15,7 @@ from backend.core.deps import (
     get_current_user_claims,
     require_admin,
     require_analyst,
+    require_reader,
 )
 from backend.db.session import get_db
 from backend.schemas.offering_match import (
@@ -60,7 +61,7 @@ async def create_offering_match(
 @router.get(
     "",
     response_model=List[OfferingMatchRead],
-    dependencies=[Depends(require_analyst)],
+    dependencies=[Depends(require_reader)],
 )
 async def list_offering_matches(
     auth_ctx: Annotated[
