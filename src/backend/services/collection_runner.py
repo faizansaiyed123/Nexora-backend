@@ -104,6 +104,7 @@ class CollectionRunner:
                         response_time_ms=result.response_time_ms,
                         status_code=result.status_code or 200,
                         custom_selectors=selectors,
+                    max_retries=config.max_retries if config else 0,
                     )
 
             availability = self._availability(result.availability)
