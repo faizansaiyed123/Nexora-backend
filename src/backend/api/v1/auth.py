@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.deps import get_current_user_db, get_db
+from backend.core.config import get_settings
 from backend.core.rate_limit import DistributedRateLimiter
 from backend.models.client import ClientModel, UserModel
 from backend.schemas.client import (
@@ -38,7 +39,8 @@ async def register(
     client_ip = request.client.host if request.client else "127.0.0.1"
     user_agent = request.headers.get("user-agent")
 
-    await DistributedRateLimiter.check_rate_limit("register", client_ip, max_requests=10, window_seconds=3600)
+    settings = get_settings()
+    await DistributedRateLimiter.check_rate_limit("register", client_ip, max_requests=settings.rate_limit_register_per_hour, window_seconds=3600)
 
     user = await AuthService.register_tenant(
         session=db,
@@ -78,8 +80,9 @@ async def login(
     client_ip = request.client.host if request.client else "127.0.0.1"
     user_agent = request.headers.get("user-agent")
 
-    await DistributedRateLimiter.check_rate_limit("login_ip", client_ip, max_requests=20, window_seconds=60)
-    await DistributedRateLimiter.check_rate_limit("login_email", data.email.lower(), max_requests=10, window_seconds=60)
+    settings = get_settings()
+    await DistributedRateLimiter.check_rate_limit("login_ip", client_ip, max_requests=settings.rate_limit_login_per_minute, window_seconds=60)
+    await DistributedRateLimiter.check_rate_limit("login_email", data.email.lower(), max_requests=settings.rate_limit_login_per_minute, window_seconds=60)
 
     user, access_token, refresh_token, expires_in = await AuthService.authenticate_user(
         session=db,
@@ -143,7 +146,8 @@ async def forgot_password(
     client_ip = request.client.host if request.client else "127.0.0.1"
     user_agent = request.headers.get("user-agent")
 
-    await DistributedRateLimiter.check_rate_limit("forgot_pwd", client_ip, max_requests=5, window_seconds=3600)
+    settings = get_settings()
+    await DistributedRateLimiter.check_rate_limit("forgot_pwd", client_ip, max_requests=settings.rate_limit_forgot_password_per_hour, window_seconds=3600)
 
     await AuthService.request_password_reset(
         session=db,
