@@ -1,412 +1,261 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from backend.models.enums import (
-    AvailabilityStatusEnum,
-    ErrorCategoryEnum,
-    JobStatusEnum,
-)
-from backend.models.observation import (
-    JobModel,
-    ObservationModel,
-    SnapshotModel,
-)
-from backend.models.competitor import OfferingMatchModel
-
+from backend.collectors.browser import render_page
+from backend.core.rate_limit import DistributedRateLimiter
+from backend.models.competitor import OfferingMatchModel, SourceModel
+from backend.models.enums import AvailabilityStatusEnum, ErrorCategoryEnum, JobStatusEnum
+from backend.models.observation import JobModel, ObservationModel, SnapshotModel
+from backend.services.alert_service import AlertService
 from backend.services.collection_service import CollectionService
+from backend.services.source_service import SourceService
 
 
 class CollectionRunner:
-    """
-    Executes a collection job and persists the result.
-
-    Flow:
-
-        Job
-          ↓
-        OfferingMatch
-          ↓
-        CollectionService
-          ↓
-        Observation
-          ↓
-        Snapshot
-          ↓
-        Job COMPLETED / FAILED
-    """
+    """Shared persistence path for scheduled/background collection jobs."""
 
     def __init__(self) -> None:
         self.collector = CollectionService()
 
-    async def run(
-        self,
-        session: AsyncSession,
-        job_id: UUID,
-    ) -> JobModel:
-        """
-        Execute a pending collection job.
-        """
-
-        # ---------------------------------------------------------
-        # 1. Load job
-        # ---------------------------------------------------------
-
-        result = await session.execute(
-            select(JobModel).where(
-                JobModel.id == job_id
-            )
-        )
-
-        job = result.scalar_one_or_none()
-
+    async def run(self, session: AsyncSession, job_id: UUID) -> JobModel:
+        job = await session.scalar(select(JobModel).where(JobModel.id == job_id))
         if job is None:
             raise ValueError("Collection job not found.")
-
-        if job.status not in {
-            JobStatusEnum.PENDING,
-            JobStatusEnum.RUNNING,
-        }:
+        if job.status not in {JobStatusEnum.PENDING, JobStatusEnum.RUNNING}:
             return job
-
-        # ---------------------------------------------------------
-        # 2. Mark job as running
-        # ---------------------------------------------------------
 
         job.status = JobStatusEnum.RUNNING
         job.started_at = datetime.now(timezone.utc)
-
         await session.commit()
-        await session.refresh(job)
 
         try:
-            # -----------------------------------------------------
-            # 3. Get offering match
-            # -----------------------------------------------------
+            match_id = (job.meta_info or {}).get("offering_match_id")
+            if not match_id:
+                raise ValueError("Job is missing offering_match_id.")
 
-            offering_match_id = job.meta_info.get(
-                "offering_match_id"
-            )
-
-            if not offering_match_id:
-                raise ValueError(
-                    "Job is missing offering_match_id."
+            match = await session.scalar(
+                select(OfferingMatchModel)
+                .options(
+                    selectinload(OfferingMatchModel.offering),
+                    selectinload(OfferingMatchModel.source).selectinload(SourceModel.competitor),
                 )
-
-            offering_match_uuid = UUID(
-                str(offering_match_id)
-            )
-
-            result = await session.execute(
-                select(OfferingMatchModel).where(
-                    OfferingMatchModel.id
-                    == offering_match_uuid,
+                .where(
+                    OfferingMatchModel.id == UUID(str(match_id)),
                     OfferingMatchModel.is_active.is_(True),
                 )
             )
+            if match is None or match.offering is None or match.source is None:
+                raise ValueError("Offering match not found.")
 
-            offering_match = result.scalar_one_or_none()
+            offering = match.offering
+            source = match.source
+            competitor = source.competitor
 
-            if offering_match is None:
-                raise ValueError(
-                    "Offering match not found."
+            if not source.competitor or not SourceService.before_collection(source):
+                job.status = JobStatusEnum.FAILED
+                job.total_items_processed = 1
+                job.failed_items = 1
+                job.error_category = ErrorCategoryEnum.CIRCUIT_BREAKER_OPEN
+                job.error_message = "Collection source is inactive or its circuit breaker is open."
+                job.completed_at = datetime.now(timezone.utc)
+                await session.commit()
+                return job
+
+            config = source.configuration
+            timeout = float(config.timeout_seconds) if config else self.collector.DEFAULT_TIMEOUT
+            headers = config.custom_headers if config and isinstance(config.custom_headers, dict) else None
+            selectors = config.extraction_selectors if config and isinstance(config.extraction_selectors, dict) else None
+
+            if config:
+                await DistributedRateLimiter.check_rate_limit(
+                    "source",
+                    str(source.id),
+                    max_requests=config.rate_limit_rpm,
+                    window_seconds=60,
                 )
+                if config.request_delay_seconds > 0:
+                    await asyncio.sleep(config.request_delay_seconds)
 
-            # -----------------------------------------------------
-            # 4. Get target URL
-            # -----------------------------------------------------
-
-            target_url = offering_match.target_url
-
-            if not target_url:
-                raise ValueError(
-                    "Offering match has no target URL."
-                )
-
-            # -----------------------------------------------------
-            # 5. Collect the website
-            # -----------------------------------------------------
-
-            collection_result = await self.collector.collect(
-                url=target_url
+            result = await self.collector.collect(
+                match.target_url,
+                timeout=timeout,
+                headers=headers,
+                custom_selectors=selectors,
             )
 
-            # -----------------------------------------------------
-            # 6. Convert availability
-            # -----------------------------------------------------
-
-            availability = (
-                self._availability_enum(
-                    collection_result.availability
+            if config and config.requires_javascript:
+                rendered = await render_page(
+                    match.target_url,
+                    timeout_seconds=config.timeout_seconds,
                 )
-            )
+                if rendered:
+                    result = self.collector.from_rendered_html(
+                        rendered,
+                        match.target_url,
+                        response_time_ms=result.response_time_ms,
+                        status_code=result.status_code or 200,
+                        custom_selectors=selectors,
+                    )
 
-            # -----------------------------------------------------
-            # 7. Create observation
-            # -----------------------------------------------------
-
+            availability = self._availability(result.availability)
             observation = ObservationModel(
-                offering_match_id=offering_match.id,
+                offering_match_id=match.id,
                 job_id=job.id,
-                observed_price=collection_result.price,
-                currency=(
-                    collection_result.currency
-                    or "USD"
-                ),
+                observed_price=result.price,
+                currency=result.currency or "USD",
                 availability=availability,
-                response_time_ms=(
-                    collection_result.response_time_ms
-                ),
-                http_status_code=(
-                    collection_result.status_code
-                    or 0
-                ),
-                raw_payload=None,
-                extracted_attributes=(
-                    collection_result.attributes
-                ),
+                response_time_ms=result.response_time_ms,
+                http_status_code=result.status_code or 0,
+                extracted_attributes=result.attributes or {},
                 observed_at=datetime.now(timezone.utc),
             )
-
             session.add(observation)
-
-            # -----------------------------------------------------
-            # 8. Update job counters
-            # -----------------------------------------------------
 
             job.total_items_processed = 1
 
-            if collection_result.success:
-                job.successful_items = 1
-                job.failed_items = 0
-            else:
-                job.successful_items = 0
-                job.failed_items = 1
-
-            # -----------------------------------------------------
-            # 9. If collection failed
-            # -----------------------------------------------------
-
-            if not collection_result.success:
-                job.status = JobStatusEnum.FAILED
-                job.error_category = (
-                    self._error_category(
-                        collection_result.error
-                    )
-                )
-                job.error_message = (
-                    collection_result.error
-                )
-                job.completed_at = (
-                    datetime.now(timezone.utc)
-                )
-
-                await session.commit()
-                await session.refresh(job)
-
-                return job
-
-            # -----------------------------------------------------
-            # 10. Flush observation so it exists in DB
-            # -----------------------------------------------------
-
-            await session.flush()
-
-            # -----------------------------------------------------
-            # 11. Get previous snapshot
-            # -----------------------------------------------------
-
-            result = await session.execute(
+            previous_snapshot = await session.scalar(
                 select(SnapshotModel).where(
-                    SnapshotModel.offering_match_id
-                    == offering_match.id
+                    SnapshotModel.offering_match_id == match.id
                 )
             )
+            previous_price = previous_snapshot.current_price if previous_snapshot else None
+            previous_availability = previous_snapshot.current_availability if previous_snapshot else None
 
-            snapshot = result.scalar_one_or_none()
+            circuit_tripped = False
 
-            previous_price: Optional[float] = None
+            if not result.success:
+                circuit_tripped = SourceService.record_collection_failure(source)
+                job.status = JobStatusEnum.FAILED
+                job.successful_items = 0
+                job.failed_items = 1
+                job.error_category = self._error_category(result.error)
+                job.error_message = result.error or "Collection failed."
+                job.completed_at = datetime.now(timezone.utc)
+                await session.commit()
 
-            if snapshot is not None:
-                previous_price = snapshot.current_price
-
-            current_price = collection_result.price
-
-            # -----------------------------------------------------
-            # 12. Calculate price changes
-            # -----------------------------------------------------
-
-            price_difference = None
-            percentage_difference = None
-
-            if (
-                previous_price is not None
-                and current_price is not None
-            ):
-                price_difference = (
-                    current_price
-                    - previous_price
-                )
-
-                if previous_price != 0:
-                    percentage_difference = float(
-                        (
-                            price_difference
-                            / previous_price
-                        )
-                        * 100
+                if circuit_tripped:
+                    await AlertService.evaluate_and_trigger(
+                        session,
+                        client_id=offering.client_id,
+                        offering_id=offering.id,
+                        offering_match_id=match.id,
+                        offering_name=offering.name,
+                        competitor_name=competitor.name if competitor else "Competitor",
+                        source_name=source.name,
+                        client_price=offering.base_price,
+                        previous_price=previous_price,
+                        current_price=None,
+                        previous_availability=previous_availability,
+                        current_availability=availability,
+                        percentage_difference=None,
+                        circuit_tripped=True,
                     )
+                    await session.commit()
+                return job
 
-            # -----------------------------------------------------
-            # 13. Create/update snapshot
-            # -----------------------------------------------------
+            SourceService.record_collection_success(source)
+            current_price = result.price
+            price_difference: Optional[Decimal] = None
+            percentage_difference: Optional[float] = None
 
-            if snapshot is None:
+            if previous_price is not None and current_price is not None:
+                price_difference = current_price - previous_price
+                if previous_price != 0:
+                    percentage_difference = float((price_difference / previous_price) * 100)
 
+            if previous_snapshot is None:
                 snapshot = SnapshotModel(
-                    offering_match_id=(
-                        offering_match.id
-                    ),
+                    offering_match_id=match.id,
                     current_price=current_price,
                     previous_price=None,
                     price_difference=None,
                     percentage_difference=None,
                     current_availability=availability,
-                    last_observed_at=(
-                        observation.observed_at
-                    ),
-                    updated_at=(
-                        datetime.now(timezone.utc)
-                    ),
+                    last_observed_at=observation.observed_at,
                 )
-
                 session.add(snapshot)
-
             else:
+                previous_snapshot.previous_price = previous_snapshot.current_price
+                previous_snapshot.current_price = current_price
+                previous_snapshot.price_difference = price_difference
+                previous_snapshot.percentage_difference = percentage_difference
+                previous_snapshot.current_availability = availability
+                previous_snapshot.last_observed_at = observation.observed_at
 
-                snapshot.previous_price = (
-                    snapshot.current_price
-                )
+            await session.flush()
 
-                snapshot.current_price = (
-                    current_price
-                )
-
-                snapshot.price_difference = (
-                    price_difference
-                )
-
-                snapshot.percentage_difference = (
-                    percentage_difference
-                )
-
-                snapshot.current_availability = (
-                    availability
-                )
-
-                snapshot.last_observed_at = (
-                    observation.observed_at
-                )
-
-                snapshot.updated_at = (
-                    datetime.now(timezone.utc)
-                )
-
-            # -----------------------------------------------------
-            # 14. Complete job
-            # -----------------------------------------------------
+            await AlertService.evaluate_and_trigger(
+                session,
+                client_id=offering.client_id,
+                offering_id=offering.id,
+                offering_match_id=match.id,
+                offering_name=offering.name,
+                competitor_name=competitor.name if competitor else "Competitor",
+                source_name=source.name,
+                client_price=offering.base_price,
+                previous_price=previous_price,
+                current_price=current_price,
+                previous_availability=previous_availability,
+                current_availability=availability,
+                percentage_difference=percentage_difference,
+                circuit_tripped=False,
+            )
 
             job.status = JobStatusEnum.COMPLETED
-            job.completed_at = (
-                datetime.now(timezone.utc)
-            )
+            job.successful_items = 1
+            job.failed_items = 0
             job.error_category = None
             job.error_message = None
-
+            job.completed_at = datetime.now(timezone.utc)
             await session.commit()
             await session.refresh(job)
-
             return job
 
         except Exception as exc:
-
-            # -----------------------------------------------------
-            # 15. Fail job safely
-            # -----------------------------------------------------
-
             await session.rollback()
-
-            # Re-load job after rollback
-            result = await session.execute(
-                select(JobModel).where(
-                    JobModel.id == job_id
-                )
-            )
-
-            job = result.scalar_one()
-
+            job = await session.scalar(select(JobModel).where(JobModel.id == job_id))
+            if job is None:
+                raise
             job.status = JobStatusEnum.FAILED
             job.total_items_processed = 1
             job.successful_items = 0
             job.failed_items = 1
-            job.error_category = (
-                self._error_category(
-                    str(exc)
-                )
-            )
+            job.error_category = self._error_category(str(exc))
             job.error_message = str(exc)
-            job.completed_at = (
-                datetime.now(timezone.utc)
-            )
-
+            job.completed_at = datetime.now(timezone.utc)
             await session.commit()
             await session.refresh(job)
-
             return job
 
     @staticmethod
-    def _availability_enum(
-        value: Optional[str],
-    ) -> AvailabilityStatusEnum:
-        """
-        Convert collector availability into
-        the database enum.
-        """
-
+    def _availability(value: Optional[str]) -> AvailabilityStatusEnum:
         if not value:
             return AvailabilityStatusEnum.UNKNOWN
-
         try:
             return AvailabilityStatusEnum(value)
         except ValueError:
             return AvailabilityStatusEnum.UNKNOWN
 
     @staticmethod
-    def _error_category(
-        error: Optional[str],
-    ) -> ErrorCategoryEnum:
-        """
-        Convert a collection error into
-        the Nexora error category.
-        """
-
+    def _error_category(error: Optional[str]) -> ErrorCategoryEnum:
         if not error:
             return ErrorCategoryEnum.PARSING_ERROR
-
         text = error.lower()
-
         if "timeout" in text:
             return ErrorCategoryEnum.NETWORK_TIMEOUT
-
         if "http 4" in text:
             return ErrorCategoryEnum.HTTP_4XX
-
         if "http 5" in text:
             return ErrorCategoryEnum.HTTP_5XX
-
+        if "circuit" in text:
+            return ErrorCategoryEnum.CIRCUIT_BREAKER_OPEN
         return ErrorCategoryEnum.PARSING_ERROR
