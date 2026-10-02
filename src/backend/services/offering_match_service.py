@@ -17,6 +17,7 @@ from backend.models.competitor import (
     SourceModel,
 )
 from backend.models.offering import OfferingModel
+from backend.services.url_security import UrlSecurityService
 from backend.schemas.offering_match import (
     OfferingMatchCreate,
     OfferingMatchUpdate,
@@ -71,12 +72,14 @@ class OfferingMatchService:
         if not source:
             raise ValueError("Source not found.")
 
+        safe_target_url = UrlSecurityService.validate_url(str(data.target_url))
+
         # Check duplicate match.
         existing_result = await db.execute(
             select(OfferingMatchModel).where(
                 OfferingMatchModel.offering_id == data.offering_id,
                 OfferingMatchModel.source_id == data.source_id,
-                OfferingMatchModel.target_url == str(data.target_url),
+                OfferingMatchModel.target_url == safe_target_url,
             )
         )
 
@@ -90,7 +93,7 @@ class OfferingMatchService:
         match = OfferingMatchModel(
             offering_id=data.offering_id,
             source_id=data.source_id,
-            target_url=str(data.target_url),
+            target_url=safe_target_url,
             match_status=data.match_status,
             confidence_score=data.confidence_score,
             extraction_selectors=data.extraction_selectors,
@@ -170,7 +173,7 @@ class OfferingMatchService:
 
         for field, value in update_data.items():
             if field == "target_url":
-                value = str(value)
+                value = UrlSecurityService.validate_url(str(value))
 
             setattr(match, field, value)
 
