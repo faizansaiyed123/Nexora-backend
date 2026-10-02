@@ -20,6 +20,7 @@ from backend.core.deps import (
     get_current_user_claims,
     require_admin,
     require_analyst,
+    require_reader,
 )
 
 router = APIRouter()
@@ -51,7 +52,7 @@ async def create_competitor(
 @router.get(
     "",
     response_model=List[CompetitorRead],
-    dependencies=[Depends(require_analyst)],
+    dependencies=[Depends(require_reader)],
 )
 async def list_competitors(
     auth_ctx: Annotated[
