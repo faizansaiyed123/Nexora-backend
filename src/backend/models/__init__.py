@@ -3,7 +3,7 @@ Central models registry for Nexora Price Intelligence Platform.
 Imports all models so SQLAlchemy metadata registers every table automatically for Alembic migrations.
 """
 
-from backend.models.alert import AlertLogModel, AlertRuleModel
+from backend.models.alert import AlertLogModel, AlertRuleModel, NotificationOutboxModel
 from backend.models.audit import AuditLogModel
 from backend.models.client import ClientModel, UserModel
 from backend.models.competitor import (
@@ -71,6 +71,7 @@ __all__ = [
     # Alerting & Notifications
     "AlertRuleModel",
     "AlertLogModel",
+    "NotificationOutboxModel",
     # Compliance & Audit Trail
     "AuditLogModel",
 ]
