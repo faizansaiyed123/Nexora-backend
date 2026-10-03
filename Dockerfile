@@ -1,4 +1,4 @@
-FROM python:3.12-slim AS runtime
+FROM python:3.12.15-slim-bookworm AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/app/src UV_LINK_MODE=copy
 WORKDIR /app
