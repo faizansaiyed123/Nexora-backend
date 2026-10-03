@@ -67,6 +67,7 @@ async def test_ssrf_validation_result_is_the_address_actually_used(monkeypatch):
 async def test_rate_limit_counter_and_expiry_are_one_atomic_redis_operation():
     fake_redis = AsyncMock()
     fake_redis.eval = AsyncMock(side_effect=[1, 2])
+    fake_redis.ttl = AsyncMock(return_value=60)
     with patch("backend.core.rate_limit.get_redis_client", new=AsyncMock(return_value=fake_redis)),          patch("backend.core.rate_limit.settings.rate_limit_enabled", True):
         await DistributedRateLimiter.check_rate_limit("test", "atomic", 2, 60)
         with pytest.raises(RateLimitException):
@@ -151,6 +152,7 @@ async def test_auth_version_rejects_role_change():
             assert exc.value.code == "TOKEN_REVOKED"
 
 
+@pytest.mark.asyncio
 async def test_collection_error_is_sanitized():
     from backend.services.collection_service import CollectionService
     with patch(
@@ -234,6 +236,7 @@ async def test_concurrent_offering_quota_is_not_exceeded():
     assert count == 1
 
 
+@pytest.mark.asyncio
 async def test_concurrent_competitor_quota_is_not_exceeded():
     async with AsyncSessionLocal() as setup:
         client = ClientModel(
@@ -274,6 +277,7 @@ async def test_concurrent_competitor_quota_is_not_exceeded():
     assert count == 1
 
 
+@pytest.mark.asyncio
 async def test_job_claim_is_single_executor():
     async with AsyncSessionLocal() as setup:
         client = ClientModel(id=uuid.uuid4(), name="Claim Tenant", slug=f"claim-{uuid.uuid4().hex[:8]}", status=ClientStatusEnum.ACTIVE)
