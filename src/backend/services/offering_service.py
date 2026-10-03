@@ -430,7 +430,6 @@ class OfferingService:
         filters = [
             OfferingModel.id == offering_id,
             OfferingModel.client_id == client_id,
-            OfferingMatchModel.is_active.is_(True),
         ]
         if match_id is not None:
             filters.append(OfferingMatchModel.id == match_id)
