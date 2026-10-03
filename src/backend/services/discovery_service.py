@@ -25,6 +25,9 @@ from backend.services.extractor import UniversalExtractor
 from backend.services.gemini_discovery_service import GeminiDiscoveryService
 from backend.services.offering_service import OfferingService
 from backend.services.safe_fetch import safe_get
+from backend.services.pinned_http import PinnedDNSHTTPTransport
+from backend.services.competitor_service import CompetitorService
+from backend.schemas.competitor import CompetitorCreate
 from backend.services.url_security import SecurityValidationError, UrlSecurityService
 
 logger = logging.getLogger("nexora.discovery")
@@ -40,9 +43,15 @@ class WebsiteDiscoveryService:
         domain = urlparse(target_url).netloc.lower() or "client-website"
         competitor = (await db.execute(select(CompetitorModel).where(CompetitorModel.client_id == client_id, CompetitorModel.domain == domain))).scalar_one_or_none()
         if competitor is None:
-            competitor = CompetitorModel(client_id=client_id, name=f"Internal Catalog ({domain})", domain=domain, status=CompetitorStatusEnum.ACTIVE)
-            db.add(competitor)
-            await db.flush()
+            competitor = await CompetitorService.create(
+                db=db,
+                client_id=client_id,
+                data=CompetitorCreate(
+                    name=f"Internal Catalog ({domain})",
+                    domain=domain,
+                    status=CompetitorStatusEnum.ACTIVE,
+                ),
+            )
         source = (await db.execute(select(SourceModel).where(SourceModel.competitor_id == competitor.id, SourceModel.base_url == target_url))).scalar_one_or_none()
         if source is None:
             source = SourceModel(competitor_id=competitor.id, name=f"Website Discovery Source ({domain})", base_url=target_url, source_type=SourceTypeEnum.OFFICIAL_STORE, is_active=True)
@@ -181,7 +190,13 @@ class WebsiteDiscoveryService:
         created = updated = failed = 0
         diagnostics: List[str] = []
         headers = {"User-Agent": cls.DEFAULT_USER_AGENT, "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8"}
-        async with httpx.AsyncClient(headers=headers, timeout=20.0, follow_redirects=False) as client:
+        async with httpx.AsyncClient(
+            headers=headers,
+            timeout=20.0,
+            follow_redirects=False,
+            transport=PinnedDNSHTTPTransport(),
+            trust_env=False,
+        ) as client:
             while queue and len(visited) < request.max_pages:
                 current = queue.pop(0)
                 if current in visited:
