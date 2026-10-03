@@ -10,7 +10,7 @@ COPY src ./src
 COPY alembic.ini ./
 COPY alembic ./alembic
 
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --python 3.12
 RUN .venv/bin/playwright install --with-deps chromium
 
 RUN groupadd --system nexora && useradd --system --gid nexora --create-home --home-dir /home/nexora nexora
