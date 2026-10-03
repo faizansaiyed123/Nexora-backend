@@ -72,6 +72,21 @@ class AlertService:
         if rule is None:
             return None
 
+        if data.offering_id is not None or "offering_id" in data.model_fields_set:
+            if data.offering_id is None:
+                rule.offering_id = None
+            else:
+                from backend.models.offering import OfferingModel
+                offering = await db.scalar(
+                    select(OfferingModel).where(
+                        OfferingModel.id == data.offering_id,
+                        OfferingModel.client_id == client_id,
+                    )
+                )
+                if offering is None:
+                    raise NotFoundException("Offering not found.", code="OFFERING_NOT_FOUND")
+                rule.offering_id = data.offering_id
+
         if data.name is not None:
             rule.name = data.name.strip()
         if data.alert_type is not None:
