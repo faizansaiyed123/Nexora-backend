@@ -38,8 +38,31 @@ class WebsiteDiscoveryService:
     @classmethod
     async def _get_or_create_client_source(cls, db: AsyncSession, client_id: uuid.UUID, target_url: str) -> SourceModel:
         domain = urlparse(target_url).netloc.lower() or "client-website"
-        competitor = (await db.execute(select(CompetitorModel).where(CompetitorModel.client_id == client_id, CompetitorModel.domain == domain))).scalar_one_or_none()
+        client = await db.scalar(
+            select(__import__("backend.models.client", fromlist=["ClientModel"]).ClientModel)
+            .where(__import__("backend.models.client", fromlist=["ClientModel"]).ClientModel.id == client_id)
+            .with_for_update()
+        )
+        if client is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client account not found.")
+        competitor = (
+            await db.execute(
+                select(CompetitorModel).where(
+                    CompetitorModel.client_id == client_id,
+                    CompetitorModel.domain == domain,
+                )
+            )
+        ).scalar_one_or_none()
         if competitor is None:
+            current_count = await db.scalar(
+                select(__import__("sqlalchemy", fromlist=["func"]).func.count(CompetitorModel.id))
+                .where(CompetitorModel.client_id == client_id)
+            ) or 0
+            if current_count >= client.max_competitors:
+                raise HTTPException(
+                    status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                    detail="Competitor limit reached. Archive an existing competitor before running discovery on a new domain.",
+                )
             competitor = CompetitorModel(client_id=client_id, name=f"Internal Catalog ({domain})", domain=domain, status=CompetitorStatusEnum.ACTIVE)
             db.add(competitor)
             await db.flush()
@@ -233,6 +256,7 @@ class WebsiteDiscoveryService:
         job.total_items_processed, job.successful_items, job.failed_items = len(candidates), created + updated, failed
         job.completed_at = datetime.now(timezone.utc)
         job.error_message = None if candidates else diagnostics[-1]
+        persisted_items = [item.model_dump(mode="json") for item in summaries[:500]]
         job.meta_info = {
             "client_id": str(client_id),
             "target_url": target_url,
@@ -241,6 +265,8 @@ class WebsiteDiscoveryService:
             "created_count": created,
             "updated_count": updated,
             "diagnostics": diagnostics,
+            "items": persisted_items,
+            "items_truncated": len(summaries) > len(persisted_items),
         }
         await db.commit()
         await db.refresh(job)
@@ -253,4 +279,4 @@ class WebsiteDiscoveryService:
         if not job:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Discovery job not found.")
         meta = job.meta_info or {}
-        return DiscoveryJobResponse(job_id=job.id, client_id=client_id, target_url=meta.get("target_url", ""), status=job.status, total_pages_crawled=meta.get("pages_crawled", 0), total_items_processed=job.total_items_processed, successful_items=job.successful_items, failed_items=job.failed_items, error_message=job.error_message, created_offerings_count=meta.get("created_count", 0), updated_offerings_count=meta.get("updated_count", 0), items=[], started_at=job.started_at, completed_at=job.completed_at)
+        return DiscoveryJobResponse(job_id=job.id, client_id=client_id, target_url=meta.get("target_url", ""), status=job.status, total_pages_crawled=meta.get("pages_crawled", 0), total_items_processed=job.total_items_processed, successful_items=job.successful_items, failed_items=job.failed_items, error_message=job.error_message, created_offerings_count=meta.get("created_count", 0), updated_offerings_count=meta.get("updated_count", 0), items=meta.get("items", []), started_at=job.started_at, completed_at=job.completed_at)
