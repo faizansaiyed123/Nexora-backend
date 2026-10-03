@@ -4,11 +4,13 @@ import json
 import re
 import time
 import asyncio
+import logging
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 from urllib.parse import urljoin
 
+from backend.services.pinned_http import pinned_get
 from backend.services.url_security import SecurityValidationError, UrlSecurityService
 
 import httpx
@@ -48,6 +50,9 @@ class CollectionResult:
     @property
     def http_status_code(self) -> Optional[int]:
         return self.status_code
+
+
+logger = logging.getLogger("nexora.collection")
 
 
 class CollectionService:
@@ -118,7 +123,7 @@ class CollectionService:
         try:
             current_url = UrlSecurityService.validate_url(url)
         except SecurityValidationError as exc:
-            return CollectionResult(False, url, None, 0, None, None, None, {}, extraction_status="SECURITY_BLOCKED", error=str(exc))
+            return CollectionResult(False, url, None, 0, None, None, None, {}, extraction_status="SECURITY_BLOCKED", error="Target URL rejected by security policy.")
 
         request_headers = self.DEFAULT_HEADERS.copy()
 
@@ -136,10 +141,11 @@ class CollectionService:
             ) as client:
                 while current_attempt <= max(0, max_retries):
                     response = None
-                    current_url = UrlSecurityService.validate_url(url)
+                    current_url = url
                     try:
                         for _ in range(6):
-                            response = await client.get(
+                            response, current_url = await pinned_get(
+                                client,
                                 current_url,
                                 headers=request_headers,
                             )
@@ -165,7 +171,7 @@ class CollectionService:
                                     availability=None,
                                     attributes={"redirect_blocked": True},
                                     extraction_status="SECURITY_BLOCKED",
-                                    error=str(exc),
+                                    error="Redirect target rejected by security policy.",
                                 )
 
                         if response is None:
@@ -443,7 +449,7 @@ class CollectionService:
         # HTTP ERROR
         # =====================================================
 
-        except httpx.HTTPError as exc:
+        except httpx.HTTPError:
 
             response_time_ms = int(
                 (time.perf_counter() - start_time) * 1000
@@ -459,19 +465,20 @@ class CollectionService:
                 availability=None,
                 attributes={},
                 extraction_status="HTTP_ERROR",
-                error=str(exc),
+                error="Collection request failed.",
             )
 
         # =====================================================
         # UNEXPECTED ERROR
         # =====================================================
 
-        except Exception as exc:
+        except Exception:
 
             response_time_ms = int(
                 (time.perf_counter() - start_time) * 1000
             )
 
+            logger.exception("Unexpected collection error for %s", url)
             return CollectionResult(
                 success=False,
                 url=url,
@@ -482,7 +489,7 @@ class CollectionService:
                 availability=None,
                 attributes={},
                 extraction_status="ERROR",
-                error=str(exc),
+                error="Internal collection error.",
             )
 
     def from_rendered_html(
