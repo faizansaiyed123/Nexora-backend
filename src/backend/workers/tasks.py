@@ -46,7 +46,6 @@ async def _enqueue_monitored_match_jobs() -> list[str]:
         await session.execute(
             update(JobModel)
             .where(
-                JobModel.job_type == JobTypeEnum.SCHEDULED_CRAWL,
                 JobModel.status == JobStatusEnum.RUNNING,
                 or_(
                     (
@@ -65,7 +64,7 @@ async def _enqueue_monitored_match_jobs() -> list[str]:
             )
             .values(
                 status=JobStatusEnum.FAILED,
-                error_message="Scheduled collection lease expired before completion.",
+                error_message="Collection lease expired before completion.",
                 failed_items=1,
                 total_items_processed=1,
                 completed_at=now,
