@@ -10,7 +10,7 @@ FastAPI, async SQLAlchemy, PostgreSQL, Redis, HTTPX/BeautifulSoup, Playwright, a
 
 1. Start PostgreSQL and Redis with `docker compose up -d postgres redis`.
 2. Install the package: `pip install .`.
-3. Set environment variables as needed (see `.env.example`).
+3. Set environment variables as needed (see `.env.example`). `JWT_SECRET_KEY` is required and must be a unique secret of at least 32 characters.
 4. Apply the current schema with `alembic upgrade head`.
 5. Start the API with `uvicorn backend.main:app --host 0.0.0.0 --port 8000`.
 
