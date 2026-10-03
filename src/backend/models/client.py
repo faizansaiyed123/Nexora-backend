@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, event, inspect
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -113,6 +113,8 @@ class UserModel(Base):
         index=True,
     )
 
+    auth_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
     email_verified: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
@@ -166,3 +168,13 @@ class UserModel(Base):
         "ClientModel",
         back_populates="users",
     )
+
+
+@event.listens_for(UserModel, "before_update")
+def _bump_auth_version_on_sensitive_change(mapper, connection, target: UserModel) -> None:
+    state = inspect(target)
+    if any(
+        state.attrs[name].history.has_changes()
+        for name in ("role", "is_active", "hashed_password")
+    ):
+        target.auth_version = int(target.auth_version or 0) + 1
