@@ -18,7 +18,7 @@ from backend.models.enums import JobStatusEnum, JobTypeEnum
 from backend.models.offering import OfferingModel
 from backend.models.observation import JobModel
 from backend.services.collection_runner import CollectionRunner
-from backend.workers.email_tasks import send_competitive_alert_email_async
+from backend.workers.email_tasks import send_outbox_email_async
 
 logger = logging.getLogger("nexora.workers")
 
@@ -178,9 +178,9 @@ async def _process_notification_outbox() -> int:
 
         try:
             if item.channel == "EMAIL":
-                await send_competitive_alert_email_async(
+                await send_outbox_email_async(
                     item.recipient,
-                    item.subject.removeprefix("Nexora Competitive Alert: "),
+                    item.subject,
                     item.body,
                     message_id=item.dedupe_key,
                 )
