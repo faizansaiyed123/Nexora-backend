@@ -181,6 +181,7 @@ async def _process_notification_outbox() -> int:
                     item.recipient,
                     item.subject.removeprefix("Nexora Competitive Alert: "),
                     item.body,
+                    message_id=item.dedupe_key,
                 )
             else:
                 raise RuntimeError("Unsupported notification channel")
