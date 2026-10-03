@@ -161,7 +161,21 @@ class CollectionService:
                             continue
 
                         break
+                    except SecurityValidationError:
+                        return CollectionResult(
+                            success=False,
+                            url=current_url,
+                            status_code=response.status_code if response is not None else None,
+                            response_time_ms=int((time.perf_counter() - start_time) * 1000),
+                            price=None,
+                            currency=None,
+                            availability=None,
+                            attributes={"redirect_blocked": True},
+                            extraction_status="SECURITY_BLOCKED",
+                            error="Redirect target rejected by security policy.",
+                        )
                     except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError, httpx.WriteError, httpx.RemoteProtocolError) as exc:
+
                         if current_attempt >= max(0, max_retries):
                             raise
                         current_attempt += 1
