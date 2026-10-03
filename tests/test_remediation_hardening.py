@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
@@ -120,6 +121,27 @@ async def test_pinned_http_uses_one_validated_resolution_for_socket(monkeypatch)
     assert stream is not None
     assert calls == [("rebind.example", 443)]
     assert captured == {"ip": "93.184.216.34", "port": 443}
+
+
+@pytest.mark.asyncio
+async def test_pinned_http_rejects_dns_rebinding_before_socket_connect(monkeypatch):
+    resolutions = []
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        resolutions.append(host)
+        ip = "93.184.216.34" if len(resolutions) == 1 else "127.0.0.1"
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, port))]
+
+    async def fake_connect(ip, port, **kwargs):
+        assert ip == "93.184.216.34"
+        return object()
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+    backend = PinnedDNSBackend()
+    monkeypatch.setattr(backend._backend, "connect_tcp", fake_connect)
+
+    await backend.connect_tcp("rebind.example", 443)
+    assert resolutions == ["rebind.example"]
 
 
 @pytest.mark.asyncio
