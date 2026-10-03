@@ -117,6 +117,39 @@ async def test_auth_version_rejects_disabled_user_token():
 
 
 @pytest.mark.asyncio
+async def test_auth_version_rejects_role_change():
+    client_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    async with AsyncSessionLocal() as session:
+        client = ClientModel(id=client_id, name="Role Version Tenant", slug=f"role-version-{uuid.uuid4().hex[:8]}", status=ClientStatusEnum.ACTIVE)
+        user = UserModel(
+            id=user_id,
+            client_id=client_id,
+            email=f"role-{uuid.uuid4().hex[:8]}@example.com",
+            hashed_password="x",
+            full_name="Role User",
+            role=RoleEnum.ANALYST,
+            is_active=True,
+            email_verified=True,
+        )
+        session.add_all([client, user])
+        await session.commit()
+        token, _, _ = create_access_token(user_id, client_id, user.role, user.email, auth_version=user.auth_version)
+
+    async with AsyncSessionLocal() as session:
+        stored = await session.get(UserModel, user_id)
+        stored.role = RoleEnum.VIEWER
+        await session.commit()
+        with patch("backend.core.rate_limit.AuthorizationStateStore.get_cached_version", new=AsyncMock(return_value=None)), \
+             patch("backend.core.rate_limit.AuthorizationStateStore.set_version", new=AsyncMock()):
+            with pytest.raises(AuthenticationException) as exc:
+                await get_current_user_claims(
+                    HTTPAuthorizationCredentials(scheme="Bearer", credentials=token),
+                    session,
+                )
+            assert exc.value.code == "TOKEN_REVOKED"
+
+
 async def test_collection_error_is_sanitized():
     from backend.services.collection_service import CollectionService
     with patch(
