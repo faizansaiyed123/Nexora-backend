@@ -8,6 +8,7 @@ import pytest
 import pytest_asyncio
 
 from backend.core.rate_limit import DistributedRateLimiter, TokenSessionStore, get_redis_client
+from backend.core.exceptions import RateLimitException
 
 
 @pytest_asyncio.fixture
@@ -149,17 +150,25 @@ async def test_password_reset_token_consumption_is_atomic(redis_client):
 
 
 @pytest.mark.asyncio
-async def test_rate_limiter_still_fails_open_without_redis():
+async def test_rate_limiter_fallback_enforces_without_redis():
+    identifier = str(uuid.uuid4())
     with patch(
         "backend.core.rate_limit.get_redis_client",
         new=AsyncMock(return_value=None),
     ):
         await DistributedRateLimiter.check_rate_limit(
             key_prefix="test",
-            identifier=str(uuid.uuid4()),
+            identifier=identifier,
             max_requests=1,
             window_seconds=60,
         )
+        with pytest.raises(RateLimitException):
+            await DistributedRateLimiter.check_rate_limit(
+                key_prefix="test",
+                identifier=identifier,
+                max_requests=1,
+                window_seconds=60,
+            )
 
 @pytest.mark.asyncio
 async def test_refresh_rotation_preserves_session_expiration(redis_client):
