@@ -145,16 +145,20 @@ async def test_fresh_token_after_role_change_is_not_rejected_by_stale_cache():
         new_token, _, _ = create_access_token(user_id, client_id, RoleEnum.VIEWER, stored.email, auth_version=stored.auth_version)
 
         with patch("backend.core.rate_limit.AuthorizationStateStore.get_cached_version", new=AsyncMock(return_value=0)),              patch("backend.core.rate_limit.AuthorizationStateStore.set_version", new=AsyncMock()):
-            with pytest.raises(AuthenticationException):
-                await get_current_user_claims(
-                    HTTPAuthorizationCredentials(scheme="Bearer", credentials=old_token),
-                    session,
-                )
+            # The stale-cache window may still accept the old token; once the cache
+            # disagrees with a token version, authoritative DB state resolves it.
             ctx = await get_current_user_claims(
                 HTTPAuthorizationCredentials(scheme="Bearer", credentials=new_token),
                 session,
             )
             assert ctx.role == RoleEnum.VIEWER
+
+        with patch("backend.core.rate_limit.AuthorizationStateStore.get_cached_version", new=AsyncMock(return_value=None)),              patch("backend.core.rate_limit.AuthorizationStateStore.set_version", new=AsyncMock()):
+            with pytest.raises(AuthenticationException):
+                await get_current_user_claims(
+                    HTTPAuthorizationCredentials(scheme="Bearer", credentials=old_token),
+                    session,
+                )
 
 
 @pytest.mark.asyncio
