@@ -107,10 +107,12 @@ async def test_http_redirect_is_revalidated():
         url="https://public.example/",
     )
 
-    async def fake_get(*args, **kwargs):
-        return first
+    async def fake_pinned_get(client, url, **kwargs):
+        if "127.0.0.1" in url:
+            raise SecurityValidationError("blocked private redirect")
+        return first, url
 
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=fake_get)):
+    with patch("backend.services.collection_service.pinned_get", new=AsyncMock(side_effect=fake_pinned_get)):
         result = await service.collect("https://public.example/")
     assert result.success is False
     assert result.extraction_status == "SECURITY_BLOCKED"
