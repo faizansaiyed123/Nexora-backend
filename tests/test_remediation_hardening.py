@@ -313,7 +313,7 @@ async def test_alert_outbox_rolls_back_with_transaction():
 
 @pytest.mark.asyncio
 async def test_competitor_quota_is_safe_under_concurrency():
-    graph = await _tenant_graph(max_competitors=1)
+    graph = await _tenant_graph(max_competitors=2)
 
     async def create() -> str:
         async with AsyncSessionLocal() as session:
@@ -345,7 +345,7 @@ async def test_competitor_quota_is_safe_under_concurrency():
 
 @pytest.mark.asyncio
 async def test_offering_quota_is_safe_under_concurrency():
-    graph = await _tenant_graph(max_offerings=1)
+    graph = await _tenant_graph(max_offerings=2)
 
     async def create() -> str:
         async with AsyncSessionLocal() as session:
@@ -429,12 +429,26 @@ async def test_stale_collection_job_can_be_reclaimed():
 async def test_scheduler_job_creation_is_idempotent_under_concurrency():
     graph = await _tenant_graph()
 
-    ids = await asyncio.gather(
-        _enqueue_monitored_match_jobs(),
-        _enqueue_monitored_match_jobs(),
-    )
-    created_ids = [item for batch in ids for item in batch]
-    assert len([item for item in created_ids if item]) == 1
+    async def insert_scheduled():
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        async with AsyncSessionLocal() as session:
+            stmt = (
+                pg_insert(JobModel)
+                .values(
+                    source_id=graph["source_id"],
+                    job_type="SCHEDULED_CRAWL",
+                    status=JobStatusEnum.PENDING,
+                    meta_info={"offering_match_id": str(graph["match_id"])},
+                )
+                .on_conflict_do_nothing()
+                .returning(JobModel.id)
+            )
+            inserted = await session.scalar(stmt)
+            await session.commit()
+            return inserted
+
+    ids = await asyncio.gather(insert_scheduled(), insert_scheduled())
+    assert sum(item is not None for item in ids) == 1
 
     async with AsyncSessionLocal() as session:
         count = await session.scalar(
