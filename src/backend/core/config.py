@@ -66,6 +66,8 @@ class Settings(BaseSettings):
 
     # Background monitoring schedule
     scheduled_collection_interval_minutes: int = 60
+    collection_job_lease_minutes: int = 30
+    notification_outbox_max_attempts: int = 5
 
     @model_validator(mode="after")
     def validate_runtime_security(self) -> "Settings":
