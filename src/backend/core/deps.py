@@ -80,7 +80,7 @@ async def get_current_user_db(
 async def get_current_authorized_user(
     auth_ctx: Annotated[AuthenticatedUserContext, Depends(get_current_user_claims)],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> UserModel:
+) -> AuthenticatedUserContext:
     """Near-real-time active/role enforcement with a short per-process DB cache."""
     key = (auth_ctx.id, auth_ctx.client_id)
     now = time.monotonic()
@@ -90,9 +90,7 @@ async def get_current_authorized_user(
             raise AuthenticationException("User account not found or disabled.", code="USER_DISABLED")
         if cached[2] != auth_ctx.role:
             raise AuthenticationException("Authorization state has changed. Please sign in again.", code="AUTHORIZATION_STALE")
-        user = await db.get(UserModel, auth_ctx.id)
-        if user is not None:
-            return user
+        return auth_ctx
 
     result = await db.execute(
         select(UserModel)
@@ -106,7 +104,7 @@ async def get_current_authorized_user(
         raise AuthenticationException("User account not found or disabled.", code="USER_DISABLED")
     if role != auth_ctx.role:
         raise AuthenticationException("Authorization state has changed. Please sign in again.", code="AUTHORIZATION_STALE")
-    return user
+    return auth_ctx
 
 
 def invalidate_authorization_cache(user_id: uuid.UUID, client_id: uuid.UUID) -> None:
