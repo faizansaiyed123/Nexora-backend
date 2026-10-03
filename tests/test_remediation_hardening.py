@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import pytest_asyncio
 from fastapi import HTTPException
+from sqlalchemy import func, select
 from fastapi.security import HTTPAuthorizationCredentials
 
 from backend.core.deps import get_current_user_claims
@@ -191,6 +192,88 @@ async def test_discovery_cannot_create_competitor_past_tenant_quota():
 
 
 @pytest.mark.asyncio
+async def test_concurrent_offering_quota_is_not_exceeded():
+    async with AsyncSessionLocal() as setup:
+        client = ClientModel(
+            id=uuid.uuid4(),
+            name="Offering Quota",
+            slug=f"offering-quota-{uuid.uuid4().hex[:8]}",
+            status=ClientStatusEnum.ACTIVE,
+            max_tracked_offerings=1,
+        )
+        setup.add(client)
+        await setup.commit()
+        client_id = client.id
+
+    from backend.schemas.offering import OfferingCreate
+
+    async def create_one(index: int):
+        async with AsyncSessionLocal() as session:
+            try:
+                await OfferingService.create(
+                    session,
+                    client_id,
+                    OfferingCreate(
+                        name=f"Concurrent {index}",
+                        offering_type=OfferingTypeEnum.PRODUCT,
+                        current_price=Decimal("10"),
+                        currency="USD",
+                        market="US",
+                    ),
+                )
+                return True
+            except HTTPException as exc:
+                return exc.status_code
+
+    results = await asyncio.gather(create_one(1), create_one(2))
+    assert results.count(True) == 1
+    async with AsyncSessionLocal() as session:
+        count = await session.scalar(
+            select(func.count(OfferingModel.id)).where(OfferingModel.client_id == client_id)
+        )
+    assert count == 1
+
+
+async def test_concurrent_competitor_quota_is_not_exceeded():
+    async with AsyncSessionLocal() as setup:
+        client = ClientModel(
+            id=uuid.uuid4(),
+            name="Competitor Quota",
+            slug=f"competitor-quota-{uuid.uuid4().hex[:8]}",
+            status=ClientStatusEnum.ACTIVE,
+            max_competitors=1,
+        )
+        setup.add(client)
+        await setup.commit()
+        client_id = client.id
+
+    from backend.schemas.competitor import CompetitorCreate
+    from backend.services.competitor_service import CompetitorService
+
+    async def create_one(index: int):
+        async with AsyncSessionLocal() as session:
+            try:
+                await CompetitorService.create(
+                    session,
+                    client_id,
+                    CompetitorCreate(
+                        name=f"Concurrent Rival {index}",
+                        domain=f"rival-{index}-{uuid.uuid4().hex[:6]}.example",
+                    ),
+                )
+                return True
+            except Exception:
+                return False
+
+    results = await asyncio.gather(create_one(1), create_one(2))
+    assert results.count(True) == 1
+    async with AsyncSessionLocal() as session:
+        count = await session.scalar(
+            select(func.count(CompetitorModel.id)).where(CompetitorModel.client_id == client_id)
+        )
+    assert count == 1
+
+
 async def test_job_claim_is_single_executor():
     async with AsyncSessionLocal() as setup:
         client = ClientModel(id=uuid.uuid4(), name="Claim Tenant", slug=f"claim-{uuid.uuid4().hex[:8]}", status=ClientStatusEnum.ACTIVE)
