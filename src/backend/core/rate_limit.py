@@ -6,6 +6,7 @@ Redis is unavailable, preserving the existing runtime behavior.
 """
 
 import logging
+import time
 from typing import Optional
 from backend.core.config import get_settings
 from backend.core.exceptions import RateLimitException
@@ -14,6 +15,9 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 _redis_client = None
+_LOCAL_WINDOWS: dict[str, tuple[float, int]] = {}
+_LOCAL_MAX_KEYS = 10000
+_AUTH_VERSION_CACHE_TTL = 5
 
 
 async def get_redis_client():
@@ -47,14 +51,23 @@ class DistributedRateLimiter:
             return
 
         redis = await get_redis_client()
-        if not redis:
-            return
-
         key = f"rl:{key_prefix}:{identifier}"
+        if not redis:
+            cls._check_local_fallback(key, max_requests, window_seconds)
+            return
         try:
-            current_count = await redis.incr(key)
-            if current_count == 1:
-                await redis.expire(key, window_seconds)
+            current_count = int(await redis.eval(
+                """
+                local current = redis.call('INCR', KEYS[1])
+                if current == 1 then
+                    redis.call('EXPIRE', KEYS[1], ARGV[1])
+                end
+                return current
+                """,
+                1,
+                key,
+                window_seconds,
+            ))
 
             if current_count > max_requests:
                 ttl = await redis.ttl(key)
@@ -66,7 +79,55 @@ class DistributedRateLimiter:
             raise
         except Exception as e:
             logger.error(f"Redis rate limit error: {e}")
+            cls._check_local_fallback(key, max_requests, window_seconds)
+
+    @classmethod
+    def _check_local_fallback(cls, key: str, max_requests: int, window_seconds: int) -> None:
+        now = time.monotonic()
+        start, count = _LOCAL_WINDOWS.get(key, (now, 0))
+        if now - start >= window_seconds:
+            start, count = now, 0
+        count += 1
+        _LOCAL_WINDOWS[key] = (start, count)
+        if len(_LOCAL_WINDOWS) > _LOCAL_MAX_KEYS:
+            cutoff = now - max(window_seconds, 60)
+            for candidate, (candidate_start, _) in list(_LOCAL_WINDOWS.items()):
+                if candidate_start < cutoff:
+                    _LOCAL_WINDOWS.pop(candidate, None)
+        if count > max_requests:
+            retry_after = max(1, int(window_seconds - (now - start)))
+            raise RateLimitException(
+                message=f"Rate limit exceeded. Please try again in {retry_after} seconds.",
+                code="RATE_LIMIT_EXCEEDED",
+            )
+
+
+class AuthorizationStateStore:
+    @classmethod
+    async def get_cached_version(cls, user_id: str) -> Optional[int]:
+        redis = await get_redis_client()
+        if not redis:
+            return None
+        try:
+            value = await redis.get(f"authver:{user_id}")
+            return int(value) if value is not None else None
+        except Exception as exc:
+            logger.error("Authorization version lookup failed: %s", exc)
+            return None
+
+    @classmethod
+    async def set_version(cls, user_id: str, version: int) -> None:
+        redis = await get_redis_client()
+        if not redis:
             return
+        try:
+            await redis.setex(
+                f"authver:{user_id}",
+                _AUTH_VERSION_CACHE_TTL,
+                int(version),
+            )
+        except Exception as exc:
+            logger.error("Authorization version cache update failed: %s", exc)
 
 
 class TokenSessionStore:
