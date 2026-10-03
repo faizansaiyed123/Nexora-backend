@@ -6,6 +6,8 @@ Redis is unavailable, preserving the existing runtime behavior.
 """
 
 import logging
+import time
+import threading
 from typing import Optional
 from backend.core.config import get_settings
 from backend.core.exceptions import RateLimitException
@@ -14,6 +16,31 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 _redis_client = None
+_fallback_counts: dict[str, tuple[int, float]] = {}
+_fallback_lock = threading.Lock()
+_RATE_LIMIT_LUA = """
+local current = redis.call('INCR', KEYS[1])
+if current == 1 then
+  redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return current
+"""
+
+
+def _fallback_check(key: str, max_requests: int, window_seconds: int) -> None:
+    now = time.monotonic()
+    with _fallback_lock:
+        count, window_start = _fallback_counts.get(key, (0, now))
+        if now - window_start >= window_seconds:
+            count, window_start = 0, now
+        count += 1
+        _fallback_counts[key] = (count, window_start)
+        if count > max_requests:
+            retry_after = max(1, int(window_seconds - (now - window_start)))
+            raise RateLimitException(
+                message=f"Rate limit exceeded. Please try again in {retry_after} seconds.",
+                code="RATE_LIMIT_EXCEEDED",
+            )
 
 
 async def get_redis_client():
@@ -46,17 +73,20 @@ class DistributedRateLimiter:
         if not settings.rate_limit_enabled:
             return
 
+        key = f"rl:{key_prefix}:{identifier}"
         redis = await get_redis_client()
         if not redis:
+            _fallback_check(key, max_requests, window_seconds)
             return
 
-        key = f"rl:{key_prefix}:{identifier}"
         try:
-            current_count = await redis.incr(key)
-            if current_count == 1:
-                await redis.expire(key, window_seconds)
-
-            if current_count > max_requests:
+            current_count = await redis.eval(
+                _RATE_LIMIT_LUA,
+                1,
+                key,
+                window_seconds,
+            )
+            if int(current_count) > max_requests:
                 ttl = await redis.ttl(key)
                 raise RateLimitException(
                     message=f"Rate limit exceeded. Please try again in {max(ttl, 1)} seconds.",
@@ -66,7 +96,7 @@ class DistributedRateLimiter:
             raise
         except Exception as e:
             logger.error(f"Redis rate limit error: {e}")
-            return
+            _fallback_check(key, max_requests, window_seconds)
 
 
 class TokenSessionStore:
