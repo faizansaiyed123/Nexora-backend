@@ -474,7 +474,7 @@ class CollectionService:
                 availability=None,
                 attributes={},
                 extraction_status="HTTP_ERROR",
-                error=str(exc),
+                error=safe_collection_error(exc),
             )
 
         # =====================================================
