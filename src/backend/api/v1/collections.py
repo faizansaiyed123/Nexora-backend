@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from typing import Annotated
 from uuid import UUID
 
@@ -32,6 +33,7 @@ from backend.services.source_service import SourceService
 
 
 router = APIRouter()
+logger = logging.getLogger("nexora.collection")
 
 
 @router.post(
@@ -551,6 +553,7 @@ async def run_collection(
 
     except Exception as exc:
 
+        logger.exception("Unexpected collection failure for offering match %s", offering_match_id_val)
         await session.rollback()
 
         failed_job = JobModel(
