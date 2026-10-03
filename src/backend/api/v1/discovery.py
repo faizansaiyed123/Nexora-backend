@@ -60,6 +60,23 @@ async def run_website_discovery(
 
 
 @router.get(
+    "/jobs",
+    response_model=list[DiscoveryJobResponse],
+    status_code=status.HTTP_200_OK,
+    summary="List Discovery Job History",
+)
+async def list_discovery_jobs(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    auth_ctx: Annotated[AuthenticatedUserContext, Depends(require_reader)],
+) -> list[DiscoveryJobResponse]:
+    jobs = await WebsiteDiscoveryService.list_discovery_jobs(
+        db=db,
+        client_id=auth_ctx.client_id,
+    )
+    return jobs
+
+
+@router.get(
     "/jobs/{job_id}",
     response_model=DiscoveryJobResponse,
     status_code=status.HTTP_200_OK,
