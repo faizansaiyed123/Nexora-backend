@@ -58,6 +58,8 @@ class JobModel(Base):
     )
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    lease_token: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
     total_items_processed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     successful_items: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     failed_items: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
