@@ -10,6 +10,8 @@ from typing import Any, Optional
 from urllib.parse import urljoin
 
 from backend.services.url_security import SecurityValidationError, UrlSecurityService
+from backend.services.pinned_http import PinnedDNSHTTPTransport
+from backend.core.error_messages import safe_collection_error
 
 import httpx
 from bs4 import BeautifulSoup
@@ -118,7 +120,7 @@ class CollectionService:
         try:
             current_url = UrlSecurityService.validate_url(url)
         except SecurityValidationError as exc:
-            return CollectionResult(False, url, None, 0, None, None, None, {}, extraction_status="SECURITY_BLOCKED", error=str(exc))
+            return CollectionResult(False, url, None, 0, None, None, None, {}, extraction_status="SECURITY_BLOCKED", error=safe_collection_error(exc))
 
         request_headers = self.DEFAULT_HEADERS.copy()
 
@@ -133,6 +135,8 @@ class CollectionService:
             async with httpx.AsyncClient(
                 timeout=timeout,
                 follow_redirects=False,
+                transport=PinnedDNSHTTPTransport(),
+                trust_env=False,
             ) as client:
                 while current_attempt <= max(0, max_retries):
                     response = None
@@ -197,9 +201,20 @@ class CollectionService:
 
             raw_payload = response.text
 
-            content_length = len(
-                response.content
-            )
+            content_length = len(response.content)
+            if content_length > 5 * 1024 * 1024:
+                return CollectionResult(
+                    success=False,
+                    url=final_url,
+                    status_code=response.status_code,
+                    response_time_ms=response_time_ms,
+                    price=None,
+                    currency=None,
+                    availability=None,
+                    attributes={},
+                    extraction_status="RESPONSE_TOO_LARGE",
+                    error="Response body exceeds the maximum allowed size.",
+                )
 
             # =================================================
             # HTTP ERROR
