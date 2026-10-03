@@ -35,7 +35,7 @@ class CompetitorService:
 
         # Get the client so we can enforce its limits.
         client_result = await db.execute(
-            select(ClientModel).where(ClientModel.id == client_id)
+            select(ClientModel).where(ClientModel.id == client_id).with_for_update()
         )
         client = client_result.scalar_one_or_none()
 
