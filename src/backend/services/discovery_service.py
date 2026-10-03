@@ -256,6 +256,7 @@ class WebsiteDiscoveryService:
             "created_count": created,
             "updated_count": updated,
             "diagnostics": diagnostics,
+            "items": [item.model_dump(mode="json") for item in summaries],
         }
         await db.commit()
         await db.refresh(job)
