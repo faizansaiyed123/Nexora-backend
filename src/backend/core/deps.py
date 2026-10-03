@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from backend.core.exceptions import AuthenticationException, ForbiddenException
 from backend.core.security import decode_and_validate_access_token
+from backend.core.rate_limit import AuthorizationStateStore
 from backend.db.session import get_db
 from backend.models.client import ClientModel, UserModel
 from backend.models.enums import RoleEnum
@@ -30,6 +31,7 @@ class AuthenticatedUserContext:
 
 async def get_current_user_claims(
     credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(http_bearer)],
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> AuthenticatedUserContext:
     if not credentials or not credentials.credentials:
         raise AuthenticationException(
@@ -45,8 +47,42 @@ async def get_current_user_claims(
         role = RoleEnum(payload["role"])
         email = payload["email"]
         jti = payload["jti"]
+        token_version = int(payload.get("ver", 0))
     except Exception:
         raise AuthenticationException("Malformed token claims.", code="INVALID_TOKEN_CLAIMS")
+
+    cached_version = await AuthorizationStateStore.get_cached_version(str(user_id))
+    if cached_version is None:
+        try:
+            result = await db.execute(
+                select(UserModel.auth_version, UserModel.is_active).where(
+                    UserModel.id == user_id,
+                    UserModel.client_id == client_id,
+                )
+            )
+            state = result.one_or_none()
+        except Exception as exc:
+            raise AuthenticationException(
+                "Authentication state could not be verified.",
+                code="AUTH_STATE_UNAVAILABLE",
+            ) from exc
+        if state is None or not state.is_active:
+            raise AuthenticationException(
+                "User account not found or disabled.",
+                code="USER_DISABLED",
+            )
+        current_version = int(state.auth_version or 0)
+        if current_version != token_version:
+            raise AuthenticationException(
+                "Session is no longer valid.",
+                code="TOKEN_REVOKED",
+            )
+        await AuthorizationStateStore.set_version(str(user_id), current_version)
+    elif cached_version != token_version:
+        raise AuthenticationException(
+            "Session is no longer valid.",
+            code="TOKEN_REVOKED",
+        )
 
     return AuthenticatedUserContext(
         user_id=user_id,
