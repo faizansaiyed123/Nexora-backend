@@ -160,3 +160,31 @@ async def test_rate_limiter_still_fails_open_without_redis():
             max_requests=1,
             window_seconds=60,
         )
+
+@pytest.mark.asyncio
+async def test_refresh_rotation_preserves_session_expiration(redis_client):
+    user_id = str(uuid.uuid4())
+    session_id = uuid.uuid4().hex
+    old_hash = uuid.uuid4().hex
+    new_hash = uuid.uuid4().hex
+    key = f"refresh:{user_id}:{session_id}"
+
+    await TokenSessionStore.store_refresh_session(
+        user_id=user_id,
+        session_id=session_id,
+        token_hash=old_hash,
+        ttl_seconds=60,
+    )
+
+    try:
+        assert await TokenSessionStore.validate_and_rotate_refresh_session(
+            user_id=user_id,
+            session_id=session_id,
+            provided_token_hash=old_hash,
+            new_token_hash=new_hash,
+            ttl_seconds=60,
+        ) is True
+        ttl = await redis_client.ttl(key)
+        assert 0 < ttl <= 60
+    finally:
+        await redis_client.delete(key)
