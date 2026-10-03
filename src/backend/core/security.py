@@ -115,6 +115,7 @@ def create_access_token(
         "client_id": str(client_id),
         "role": role.value if hasattr(role, "value") else str(role),
         "email": email,
+        "ver": int(auth_version),
         "jti": jti,
         "type": "access",
         "iat": int(now.timestamp()),
