@@ -39,6 +39,25 @@ async def _enqueue_monitored_match_jobs() -> list[str]:
         matches = result.scalars().all()
         job_ids: list[str] = []
 
+        now = datetime.now(timezone.utc)
+        await session.execute(
+            update(JobModel)
+            .where(
+                JobModel.job_type == JobTypeEnum.SCHEDULED_CRAWL,
+                JobModel.status == JobStatusEnum.RUNNING,
+                JobModel.lease_expires_at.is_not(None),
+                JobModel.lease_expires_at < now,
+            )
+            .values(
+                status=JobStatusEnum.FAILED,
+                error_message="Scheduled collection lease expired before completion.",
+                failed_items=1,
+                total_items_processed=1,
+                completed_at=now,
+                lease_expires_at=None,
+            )
+        )
+
         for match in matches:
             if match.offering is None or match.source is None:
                 continue
