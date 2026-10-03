@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from typing import Annotated
 from uuid import UUID
 
@@ -28,6 +29,9 @@ from backend.services.alert_service import AlertService
 from backend.collectors.browser import render_page
 from backend.services.collection_service import CollectionService
 from backend.services.source_service import SourceService
+
+
+logger = logging.getLogger("nexora.collections_api")
 
 
 router = APIRouter()
@@ -230,11 +234,20 @@ async def run_collection(
         # 6. Find existing snapshot
         # -----------------------------------------------------
 
+        # Serialize snapshot transitions on the match row. This also protects the
+        # first-observation case where no snapshot row exists yet.
+        await session.execute(
+            select(OfferingMatchModel.id)
+            .where(OfferingMatchModel.id == offering_match_id_val)
+            .with_for_update()
+        )
         snapshot_result = await session.execute(
-            select(SnapshotModel).where(
+            select(SnapshotModel)
+            .where(
                 SnapshotModel.offering_match_id
                 == offering_match_id_val
             )
+            .with_for_update()
         )
         snapshot = snapshot_result.scalar_one_or_none()
 
@@ -550,6 +563,7 @@ async def run_collection(
 
     except Exception as exc:
 
+        logger.exception("On-demand collection failed for match %s", offering_match_id_val)
         await session.rollback()
 
         failed_job = JobModel(
@@ -559,7 +573,7 @@ async def run_collection(
             total_items_processed=1,
             successful_items=0,
             failed_items=1,
-            error_message=str(exc),
+            error_message="Collection job failed.",
             meta_info={
                 "offering_match_id": str(
                     offering_match_id_val
