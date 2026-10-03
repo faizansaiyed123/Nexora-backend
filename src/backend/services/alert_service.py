@@ -339,14 +339,16 @@ class AlertService:
         channels: dict[str, Any],
         title: str,
         message: str,
-    ) -> None:
-        """Queue notifications transactionally; delivery happens after commit."""
+    ) -> int:
+        """Queue notification records transactionally; delivery happens after commit."""
         email_setting = channels.get("email")
         if not email_setting:
-            return
+            return 0
 
-        if isinstance(email_setting, list):
+        if isinstance(email_setting, (list, tuple, set)):
             recipients = [str(x).strip().lower() for x in email_setting if str(x).strip()]
+        elif isinstance(email_setting, str) and email_setting.strip():
+            recipients = [email_setting.strip().lower()]
         else:
             result = await db.execute(
                 select(UserModel.email).where(
@@ -357,11 +359,12 @@ class AlertService:
             )
             recipients = [str(x).strip().lower() for x in result.scalars().all()]
 
+        rows: list[NotificationOutboxModel] = []
         for email in dict.fromkeys(recipients):
             dedupe_key = hashlib.sha256(
                 f"{alert_log.id}:EMAIL:{email}".encode("utf-8")
             ).hexdigest()
-            db.add(
+            rows.append(
                 NotificationOutboxModel(
                     alert_log_id=alert_log.id,
                     recipient=email,
@@ -382,3 +385,9 @@ class AlertService:
                     dedupe_key=dedupe_key,
                 )
             )
+
+        if rows:
+            db.add_all(rows)
+            await db.flush()
+
+        return len(rows)
