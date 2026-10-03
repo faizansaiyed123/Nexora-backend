@@ -36,6 +36,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/nexora
       REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in your environment or .env}
       ENVIRONMENT: development
       CORS_ORIGINS: '["http://localhost:5173","http://localhost:3000"]'
     ports:
@@ -59,6 +60,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/nexora
       REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in your environment or .env}
       ENVIRONMENT: development
     command: ["celery", "-A", "backend.workers.celery_app.celery_app", "worker", "--loglevel=INFO"]
     depends_on:
@@ -72,6 +74,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/nexora
       REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in your environment or .env}
       ENVIRONMENT: development
     command: ["celery", "-A", "backend.workers.celery_app.celery_app", "beat", "--loglevel=INFO"]
     depends_on:

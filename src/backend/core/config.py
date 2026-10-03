@@ -4,6 +4,9 @@ from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+_PLACEHOLDER_SECRET_MARKERS = ("change_in_production", "replace-with", "changeme", "your-secret", "example")
+
+
 class Settings(BaseSettings):
     app_name: str = "Nexora Price Intelligence Platform"
     app_version: str = "0.1.0"
@@ -17,7 +20,8 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     # JWT Authentication
-    jwt_secret_key: str = "nexora_super_secret_jwt_key_change_in_production_32bytes_min"
+    # Required: no default, so the app refuses to start without a real secret.
+    jwt_secret_key: str
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 7
@@ -65,11 +69,15 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_runtime_security(self) -> "Settings":
-        if self.environment.lower() in {"prod", "production"}:
-            if len(self.jwt_secret_key) < 32 or self.jwt_secret_key == "nexora_super_secret_jwt_key_change_in_production_32bytes_min":
-                raise ValueError("JWT_SECRET_KEY must be a unique random secret of at least 32 characters in production.")
-            if "*" in self.allowed_hosts:
-                raise ValueError("ALLOWED_HOSTS must be explicit in production.")
+        secret = self.jwt_secret_key
+        lowered = secret.lower()
+        if len(secret) < 32 or any(marker in lowered for marker in _PLACEHOLDER_SECRET_MARKERS):
+            raise ValueError(
+                "JWT_SECRET_KEY must be a random secret of at least 32 characters (placeholder values are rejected). "
+                'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(48))"'
+            )
+        if self.environment.lower() in {"prod", "production"} and "*" in self.allowed_hosts:
+            raise ValueError("ALLOWED_HOSTS must be explicit in production.")
         return self
 
     model_config = SettingsConfigDict(

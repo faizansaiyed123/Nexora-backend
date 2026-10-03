@@ -26,6 +26,10 @@ BLOCKED_IP_NETWORKS = [
     ipaddress.ip_network("::1/128"),            # IPv6 Loopback
     ipaddress.ip_network("fc00::/7"),           # IPv6 Unique Local Address
     ipaddress.ip_network("fe80::/10"),          # IPv6 Link-Local
+    ipaddress.ip_network("100.64.0.0/10"),      # Carrier-grade NAT (RFC 6598)
+    ipaddress.ip_network("198.18.0.0/15"),      # Benchmarking (RFC 2544)
+    ipaddress.ip_network("192.0.0.0/24"),       # IETF protocol assignments
+    ipaddress.ip_network("64:ff9b::/96"),       # NAT64 (can embed private IPv4)
 ]
 
 # Tracking query parameters to strip during canonicalization
@@ -47,6 +51,16 @@ class UrlSecurityService:
     """
     Validates target URLs against SSRF, internal network scanning, and malformed inputs.
     """
+
+    @staticmethod
+    def is_ip_blocked(ip_str: str) -> bool:
+        """True if the address must never be fetched."""
+        ip_obj = ipaddress.ip_address(ip_str.split("%", 1)[0])
+        if isinstance(ip_obj, ipaddress.IPv6Address) and ip_obj.ipv4_mapped:
+            ip_obj = ip_obj.ipv4_mapped
+        if not ip_obj.is_global:
+            return True
+        return any(ip_obj in net for net in BLOCKED_IP_NETWORKS)
 
     @classmethod
     def validate_url(cls, url: Optional[str], allow_empty: bool = True) -> Optional[str]:
@@ -104,13 +118,10 @@ class UrlSecurityService:
             addr_info = socket.getaddrinfo(hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
             for family, _, _, _, sockaddr in addr_info:
                 ip_str = sockaddr[0]
-                ip_obj = ipaddress.ip_address(ip_str)
-
-                for blocked_net in BLOCKED_IP_NETWORKS:
-                    if ip_obj in blocked_net:
-                        raise SecurityValidationError(
-                            f"Target host resolves to a restricted private or link-local address ({ip_str})."
-                        )
+                if cls.is_ip_blocked(ip_str):
+                    raise SecurityValidationError(
+                        f"Target host resolves to a restricted private or link-local address ({ip_str})."
+                    )
         except socket.gaierror:
             # If domain has valid TLD and syntax, check for suspicious internal suffixes
             if "." not in hostname or hostname.endswith((".local", ".internal", ".corp", ".lan", ".localhost")):

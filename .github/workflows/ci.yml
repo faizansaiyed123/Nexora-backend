@@ -13,6 +13,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      JWT_SECRET_KEY: test-only-nexora-ci-secret-32-characters-minimum
     services:
       postgres:
         image: postgres:18

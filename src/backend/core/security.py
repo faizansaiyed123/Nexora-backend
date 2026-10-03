@@ -39,13 +39,28 @@ try:
         return _ph.hash(password)
 
     def verify_password(plain_password: str, hashed_password: str) -> bool:
-        """Verify plain password against Argon2id hash."""
+        """Verify a password using Argon2id, with legacy PBKDF2 verify-only support."""
+        if hashed_password.startswith("pbkdf2_sha256$"):
+            try:
+                _, salt, key_hex = hashed_password.split("$")
+                key = hashlib.pbkdf2_hmac("sha256", plain_password.encode("utf-8"), salt.encode("utf-8"), 100000)
+                return hmac.compare_digest(key.hex(), key_hex)
+            except ValueError:
+                return False
         try:
             return _ph.verify(hashed_password, plain_password)
         except VerifyMismatchError:
             return False
         except Exception:
             return False
+
+    def password_needs_rehash(hashed_password: str) -> bool:
+        if hashed_password.startswith("pbkdf2_sha256$"):
+            return True
+        try:
+            return _ph.check_needs_rehash(hashed_password)
+        except Exception:
+            return True
 
 except ImportError:
     def get_password_hash(password: str) -> str:
@@ -62,6 +77,13 @@ except ImportError:
             return hmac.compare_digest(key.hex(), key_hex)
         except Exception:
             return False
+
+    def password_needs_rehash(hashed_password: str) -> bool:
+        return hashed_password.startswith("pbkdf2_sha256$")
+
+
+# A real password hash is used only for timing equalisation on unknown users.
+DUMMY_PASSWORD_HASH = get_password_hash(secrets.token_urlsafe(16))
 
 
 def generate_secure_token(nbytes: int = 48) -> str:
@@ -144,7 +166,17 @@ def decode_and_validate_access_token(token: str) -> Dict[str, Any]:
         payload_b64_padded = payload_b64 + "=" * (4 - payload_padding) if payload_padding else payload_b64
         payload = json.loads(base64.urlsafe_b64decode(payload_b64_padded.encode()).decode())
     except Exception as e:
-        raise AuthenticationException("Token verification failed: " + str(e), code="TOKEN_EXPIRED_OR_INVALID")
+        try:
+            import jwt
+            if isinstance(e, jwt.ExpiredSignatureError):
+                raise AuthenticationException("Token has expired.", code="TOKEN_EXPIRED") from None
+            if isinstance(e, jwt.InvalidTokenError):
+                raise AuthenticationException("Invalid or malformed token.", code="INVALID_TOKEN") from None
+        except ImportError:
+            pass
+        if isinstance(e, AuthenticationException):
+            raise
+        raise AuthenticationException("Invalid or malformed token.", code="INVALID_TOKEN") from None
 
     if payload.get("type") != "access":
         raise AuthenticationException("Invalid token type.", code="INVALID_TOKEN_TYPE")

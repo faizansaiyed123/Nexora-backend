@@ -24,6 +24,7 @@ from backend.schemas.offering import OfferingCreate, OfferingUpdate
 from backend.services.extractor import UniversalExtractor
 from backend.services.gemini_discovery_service import GeminiDiscoveryService
 from backend.services.offering_service import OfferingService
+from backend.services.safe_fetch import safe_get
 from backend.services.url_security import SecurityValidationError, UrlSecurityService
 
 logger = logging.getLogger("nexora.discovery")
@@ -180,7 +181,7 @@ class WebsiteDiscoveryService:
         created = updated = failed = 0
         diagnostics: List[str] = []
         headers = {"User-Agent": cls.DEFAULT_USER_AGENT, "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8"}
-        async with httpx.AsyncClient(headers=headers, timeout=20.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(headers=headers, timeout=20.0, follow_redirects=False) as client:
             while queue and len(visited) < request.max_pages:
                 current = queue.pop(0)
                 if current in visited:
@@ -191,7 +192,7 @@ class WebsiteDiscoveryService:
                     continue
                 visited.add(safe_url)
                 try:
-                    response = await client.get(safe_url)
+                    response = await safe_get(client, safe_url)
                     if response.status_code != 200:
                         diagnostics.append(f"Skipped {safe_url}: HTTP {response.status_code}")
                         continue
