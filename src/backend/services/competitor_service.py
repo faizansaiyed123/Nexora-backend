@@ -8,6 +8,7 @@ This prevents users from accessing competitors belonging to another client.
 import uuid
 from typing import List 
 from backend.core.exceptions import ForbiddenException
+from backend.core.tenant_lock import acquire_tenant_lock
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from backend.models.client import ClientModel
@@ -32,6 +33,8 @@ class CompetitorService:
 
         Also enforces the client's max_competitors limit.
         """
+
+        await acquire_tenant_lock(db, client_id, "competitor_quota")
 
         # Get the client so we can enforce its limits.
         client_result = await db.execute(
