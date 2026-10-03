@@ -1,9 +1,12 @@
-name: Temporary uv lock verification
+name: Temporary uv lock synchronization
 
 on:
   push:
     branches:
       - hardening/remaining-issues-20261003
+
+permissions:
+  contents: write
 
 jobs:
   uv-lock:
@@ -14,10 +17,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - name: Regenerate lockfile without committing
+      - name: Synchronize uv.lock and remove temporary workflow
         run: |
           uv lock
-          echo "=== uv.lock diff stat ==="
-          git diff --stat -- uv.lock
-          echo "=== uv.lock diff ==="
-          git diff -- uv.lock
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add uv.lock
+          git rm .github/workflows/_tmp-uv-lock-check.yml
+          git commit -m "chore: synchronize uv lockfile"
+          git push
