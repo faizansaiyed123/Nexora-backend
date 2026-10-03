@@ -97,3 +97,28 @@ class PriceTrendResponse(BaseModel):
     max_price: Optional[Decimal]
     average_price: Optional[Decimal]
     history: List[PriceHistoryPoint]
+
+
+class ObservationHistoryItem(BaseModel):
+    id: uuid.UUID
+    offering_match_id: uuid.UUID
+    competitor_id: uuid.UUID
+    competitor_name: str
+    source_id: uuid.UUID
+    source_name: str
+    target_url: str
+    observed_at: datetime
+    observed_price: Optional[Decimal] = None
+    currency: str
+    availability: AvailabilityStatusEnum
+    response_time_ms: int
+    http_status_code: int
+
+
+class ObservationHistoryResponse(BaseModel):
+    items: List[ObservationHistoryItem]
+    total_count: int
+    page: int
+    page_size: int
+    total_pages: int
+    has_more: bool
