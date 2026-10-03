@@ -450,7 +450,7 @@ async def test_alert_notifications_are_transactional_outbox_records():
         rule = AlertRuleModel(id=uuid.uuid4(), client_id=client.id, offering_id=offering.id, name="Drop", alert_type=AlertTypeEnum.PERCENTAGE_DROP, threshold_value=5, target_channels={"email": ["person@example.com"]}, cooldown_minutes=60, is_active=True)
         setup.add_all([client, competitor, source, offering, match, rule])
         await setup.commit()
-        await __import__("backend.services.alert_service", fromlist=["AlertService"]).AlertService.evaluate_and_trigger(
+        triggered = await __import__("backend.services.alert_service", fromlist=["AlertService"]).AlertService.evaluate_and_trigger(
             setup,
             client_id=client.id,
             offering_id=offering.id,
@@ -465,6 +465,7 @@ async def test_alert_notifications_are_transactional_outbox_records():
             current_availability=__import__("backend.models.enums", fromlist=["AvailabilityStatusEnum"]).AvailabilityStatusEnum.IN_STOCK,
             percentage_difference=-10,
         )
+        assert triggered == 1
         await setup.flush()
         outbox_count = await setup.scalar(__import__("sqlalchemy").select(__import__("sqlalchemy").func.count(NotificationOutboxModel.id)))
         assert outbox_count == 1
