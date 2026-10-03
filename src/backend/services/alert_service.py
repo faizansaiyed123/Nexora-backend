@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Optional
 import uuid
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.exceptions import NotFoundException
@@ -184,26 +184,9 @@ class AlertService:
         triggered = 0
 
         for candidate_rule in rules:
-            rule = await db.scalar(
-                select(AlertRuleModel)
-                .where(
-                    AlertRuleModel.id == candidate_rule.id,
-                    AlertRuleModel.client_id == client_id,
-                    AlertRuleModel.is_active.is_(True),
-                )
-                .with_for_update()
-            )
-            if rule is None:
-                continue
-
-            if rule.last_triggered_at is not None:
-                elapsed = (now - rule.last_triggered_at).total_seconds() / 60
-                if elapsed < rule.cooldown_minutes:
-                    continue
-
             event = cls._evaluate_rule(
-                rule.alert_type,
-                rule.threshold_value,
+                candidate_rule.alert_type,
+                candidate_rule.threshold_value,
                 client_price=client_price,
                 previous_price=previous_price,
                 current_price=current_price,
@@ -216,8 +199,26 @@ class AlertService:
                 continue
 
             triggered_value, title, message, payload = event
+            cutoff = now - timedelta(minutes=candidate_rule.cooldown_minutes)
+            claimed = await db.scalar(
+                update(AlertRuleModel)
+                .where(
+                    AlertRuleModel.id == candidate_rule.id,
+                    AlertRuleModel.client_id == client_id,
+                    AlertRuleModel.is_active.is_(True),
+                    or_(
+                        AlertRuleModel.last_triggered_at.is_(None),
+                        AlertRuleModel.last_triggered_at <= cutoff,
+                    ),
+                )
+                .values(last_triggered_at=now)
+                .returning(AlertRuleModel.id)
+            )
+            if claimed is None:
+                continue
+
             log = AlertLogModel(
-                alert_rule_id=rule.id,
+                alert_rule_id=candidate_rule.id,
                 offering_match_id=offering_match_id,
                 title=title,
                 message=message,
@@ -232,19 +233,17 @@ class AlertService:
                 is_read=False,
             )
             db.add(log)
-            rule.last_triggered_at = now
             await db.flush()
-            triggered += 1
-
             await cls._enqueue_notifications(
                 db,
                 alert_log=log,
                 client_id=client_id,
-                channels=rule.target_channels or {},
+                channels=candidate_rule.target_channels or {},
                 title=title,
                 message=message,
             )
-
+            await db.flush()
+            triggered += 1
         return triggered
 
     @staticmethod
