@@ -11,9 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.exceptions import NotFoundException
 from backend.models.alert import AlertLogModel, AlertRuleModel
+from backend.models.notification import NotificationOutboxModel
 from backend.models.client import UserModel
 from backend.models.enums import AlertTypeEnum, AvailabilityStatusEnum
-from backend.workers.email_tasks import send_competitive_alert_email_async
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,15 @@ class AlertService:
         )
         if rule is None:
             return None
+
+        if data.offering_id is not None:
+            from backend.models.offering import OfferingModel
+            offering = await db.scalar(select(OfferingModel).where(OfferingModel.id == data.offering_id, OfferingModel.client_id == client_id))
+            if offering is None:
+                raise NotFoundException("Offering not found.", code="OFFERING_NOT_FOUND")
+            rule.offering_id = data.offering_id
+        elif data.offering_id is None and hasattr(data, "model_fields_set") and "offering_id" in data.model_fields_set:
+            rule.offering_id = None
 
         if data.name is not None:
             rule.name = data.name.strip()
@@ -215,6 +224,7 @@ class AlertService:
                 channels=rule.target_channels or {},
                 title=title,
                 message=message,
+                dedup_prefix=str(log.id),
             )
 
         return triggered
@@ -311,6 +321,7 @@ class AlertService:
         channels: dict[str, Any],
         title: str,
         message: str,
+        dedup_prefix: str,
     ) -> None:
         email_setting = channels.get("email")
         if not email_setting:
@@ -328,8 +339,20 @@ class AlertService:
             )
             recipients = [str(x) for x in result.scalars().all()]
 
-        for email in recipients:
-            try:
-                await send_competitive_alert_email_async(email, title, message)
-            except Exception:
-                logger.warning("Competitive alert email failed for %s", email, exc_info=True)
+        seen: set[str] = set()
+        for raw_email in recipients:
+            email = str(raw_email).strip().lower()
+            if not email or email in seen:
+                continue
+            seen.add(email)
+            db.add(
+                NotificationOutboxModel(
+                    client_id=client_id,
+                    channel="email",
+                    recipient=email,
+                    title=title,
+                    message=message,
+                    dedup_key=f"{dedup_prefix}:email:{email}",
+                    status="PENDING",
+                )
+            )
