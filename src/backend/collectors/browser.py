@@ -15,15 +15,27 @@ async def render_page(url: str, timeout_seconds: int = 20) -> Optional[str]:
     try:
         from playwright.async_api import async_playwright
 
+        validated = UrlSecurityService.resolve_and_validate_url(url, allow_empty=False)
+        if validated is None:
+            return None
+
         async with async_playwright() as playwright:
-            browser = await playwright.chromium.launch(headless=True)
+            browser = await playwright.chromium.launch(
+                headless=True,
+                args=[f"--host-resolver-rules=MAP {validated.hostname} {validated.ip_address}"],
+            )
             try:
-                safe_url = UrlSecurityService.validate_url(url)
+                safe_url = validated.url
                 page = await browser.new_page()
 
                 async def guard_route(route) -> None:
                     try:
-                        UrlSecurityService.validate_url(route.request.url)
+                        request_target = UrlSecurityService.resolve_and_validate_url(
+                            route.request.url,
+                            allow_empty=False,
+                        )
+                        if request_target is None or request_target.hostname != validated.hostname:
+                            raise SecurityValidationError("Cross-host browser requests are not permitted.")
                     except SecurityValidationError:
                         await route.abort()
                         return
