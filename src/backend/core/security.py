@@ -102,6 +102,7 @@ def create_access_token(
     role: RoleEnum,
     email: str,
     expires_delta: Optional[timedelta] = None,
+    auth_version: int = 0,
 ) -> Tuple[str, str, int]:
     now = datetime.now(timezone.utc)
     if expires_delta:
