@@ -274,6 +274,49 @@ class WebsiteDiscoveryService:
         return DiscoveryJobResponse(job_id=job.id, client_id=client_id, target_url=target_url, status=job.status, total_pages_crawled=len(visited), total_items_processed=len(candidates), successful_items=created + updated, failed_items=failed, error_message=job.error_message, created_offerings_count=created, updated_offerings_count=updated, items=summaries, started_at=job.started_at, completed_at=job.completed_at)
 
     @classmethod
+    async def list_discovery_jobs(
+        cls,
+        db: AsyncSession,
+        client_id: uuid.UUID,
+        limit: int = 50,
+    ) -> list[DiscoveryJobResponse]:
+        """Return durable discovery history scoped to the authenticated tenant."""
+        result = await db.execute(
+            select(JobModel)
+            .join(SourceModel)
+            .join(CompetitorModel)
+            .where(
+                JobModel.job_type == JobTypeEnum.SCHEMA_DISCOVERY,
+                CompetitorModel.client_id == client_id,
+            )
+            .order_by(JobModel.created_at.desc())
+            .limit(limit)
+        )
+        jobs = result.scalars().all()
+        responses: list[DiscoveryJobResponse] = []
+        for job in jobs:
+            meta = job.meta_info or {}
+            responses.append(
+                DiscoveryJobResponse(
+                    job_id=job.id,
+                    client_id=client_id,
+                    target_url=meta.get("target_url", ""),
+                    status=job.status,
+                    total_pages_crawled=meta.get("pages_crawled", 0),
+                    total_items_processed=job.total_items_processed,
+                    successful_items=job.successful_items,
+                    failed_items=job.failed_items,
+                    error_message=job.error_message,
+                    created_offerings_count=meta.get("created_count", 0),
+                    updated_offerings_count=meta.get("updated_count", 0),
+                    items=meta.get("items", []),
+                    started_at=job.started_at,
+                    completed_at=job.completed_at,
+                )
+            )
+        return responses
+
+    @classmethod
     async def get_discovery_job(cls, db: AsyncSession, job_id: uuid.UUID, client_id: uuid.UUID) -> DiscoveryJobResponse:
         statement = select(JobModel).join(SourceModel).join(CompetitorModel).where(JobModel.id == job_id, CompetitorModel.client_id == client_id)
         job = (await db.execute(statement)).scalar_one_or_none()
