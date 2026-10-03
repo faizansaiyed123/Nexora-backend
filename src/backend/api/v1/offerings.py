@@ -37,6 +37,7 @@ from backend.schemas.offering import (
     DynamicFieldDefinitionRead,
     OfferingCreate,
     OfferingDetailRead,
+    OfferingHistoryRead,
     OfferingPaginationResponse,
     OfferingRead,
     OfferingUpdate,
@@ -340,6 +341,24 @@ async def list_offerings(
         include_archived=include_archived,
         page=page,
         page_size=page_size,
+    )
+
+
+@router.get(
+    "/{offering_id}/history",
+    response_model=List[OfferingHistoryRead],
+    summary="Get Offering Price History",
+    dependencies=[Depends(require_analyst)],
+)
+async def offering_history(
+    offering_id: uuid.UUID,
+    auth_ctx: Annotated[AuthenticatedUserContext, Depends(get_current_user_claims)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    return await OfferingService.history(
+        db=db,
+        client_id=auth_ctx.client_id,
+        offering_id=offering_id,
     )
 
 
