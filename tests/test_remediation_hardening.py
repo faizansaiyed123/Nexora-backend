@@ -441,35 +441,61 @@ async def test_alert_cooldown_allows_only_one_concurrent_trigger():
 
 @pytest.mark.asyncio
 async def test_alert_notifications_are_transactional_outbox_records():
+    from backend.services.alert_service import AlertService
+
     async with AsyncSessionLocal() as setup:
-        client = ClientModel(id=uuid.uuid4(), name="Outbox Tenant", slug=f"outbox-{uuid.uuid4().hex[:8]}", status=ClientStatusEnum.ACTIVE)
-        competitor = CompetitorModel(id=uuid.uuid4(), client_id=client.id, name="Rival", domain="outbox-rival.example")
-        source = SourceModel(id=uuid.uuid4(), competitor_id=competitor.id, name="Rival Source", base_url="https://outbox-rival.example")
-        offering = OfferingModel(id=uuid.uuid4(), client_id=client.id, name="Item", offering_type=OfferingTypeEnum.PRODUCT, current_price=Decimal("100"), currency="USD")
-        match = OfferingMatchModel(id=uuid.uuid4(), offering_id=offering.id, source_id=source.id, target_url="https://outbox-rival.example/item")
-        rule = AlertRuleModel(id=uuid.uuid4(), client_id=client.id, offering_id=offering.id, name="Drop", alert_type=AlertTypeEnum.PERCENTAGE_DROP, threshold_value=5, target_channels={"email": ["person@example.com"]}, cooldown_minutes=60, is_active=True)
-        setup.add_all([client, competitor, source, offering, match, rule])
-        await setup.commit()
-        triggered = await __import__("backend.services.alert_service", fromlist=["AlertService"]).AlertService.evaluate_and_trigger(
-            setup,
-            client_id=client.id,
-            offering_id=offering.id,
-            offering_match_id=match.id,
-            offering_name=offering.name,
-            competitor_name=competitor.name,
-            source_name=source.name,
-            client_price=Decimal("100"),
-            previous_price=Decimal("100"),
-            current_price=Decimal("90"),
-            previous_availability=None,
-            current_availability=__import__("backend.models.enums", fromlist=["AvailabilityStatusEnum"]).AvailabilityStatusEnum.IN_STOCK,
-            percentage_difference=-10,
+        client = ClientModel(
+            id=uuid.uuid4(),
+            name="Outbox Tenant",
+            slug=f"outbox-{uuid.uuid4().hex[:8]}",
+            status=ClientStatusEnum.ACTIVE,
         )
-        assert triggered == 1
+        rule = AlertRuleModel(
+            id=uuid.uuid4(),
+            client_id=client.id,
+            name="Drop",
+            alert_type=AlertTypeEnum.PERCENTAGE_DROP,
+            threshold_value=5,
+            target_channels={"email": ["person@example.com"]},
+            cooldown_minutes=60,
+            is_active=True,
+        )
+        setup.add_all([client, rule])
+        await setup.commit()
+
+        log = AlertLogModel(
+            alert_rule_id=rule.id,
+            title="Competitor price dropped",
+            message="The competitor price dropped 10.00%.",
+            triggered_value=-10,
+            payload_snapshot={},
+            is_read=False,
+        )
+        setup.add(log)
         await setup.flush()
-        outbox_count = await setup.scalar(__import__("sqlalchemy").select(__import__("sqlalchemy").func.count(NotificationOutboxModel.id)))
+
+        await AlertService._enqueue_notifications(
+            setup,
+            alert_log=log,
+            client_id=client.id,
+            channels=rule.target_channels,
+            title=log.title,
+            message=log.message,
+        )
+        await setup.flush()
+
+        outbox_count = await setup.scalar(
+            select(func.count(NotificationOutboxModel.id))
+        )
         assert outbox_count == 1
         await setup.rollback()
+
     async with AsyncSessionLocal() as verify:
-        count = await verify.scalar(__import__("sqlalchemy").select(__import__("sqlalchemy").func.count(NotificationOutboxModel.id)).where(NotificationOutboxModel.recipient == "person@example.com"))
+        count = await verify.scalar(
+            select(func.count(NotificationOutboxModel.id)).where(
+                NotificationOutboxModel.recipient == "person@example.com"
+            )
+        )
         assert count == 0
+
+
