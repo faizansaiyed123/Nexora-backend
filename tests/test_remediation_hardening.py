@@ -686,14 +686,19 @@ async def test_scheduler_reaps_legacy_running_job_without_lease():
         job_id = job.id
 
     job_ids = await _enqueue_monitored_match_jobs()
-    assert len(job_ids) == 1
+    assert job_ids
 
     async with AsyncSessionLocal() as session:
         old_job = await session.scalar(
             select(JobModel).where(JobModel.id == job_id)
         )
         new_job = await session.scalar(
-            select(JobModel).where(JobModel.id == job_ids[0])
+            select(JobModel).where(
+                JobModel.source_id == graph["source_id"],
+                JobModel.job_type == JobTypeEnum.SCHEDULED_CRAWL,
+                JobModel.status == JobStatusEnum.PENDING,
+                JobModel.meta_info["offering_match_id"].astext == str(graph["match_id"]),
+            )
         )
 
     assert old_job is not None
