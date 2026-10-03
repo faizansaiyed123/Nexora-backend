@@ -31,7 +31,7 @@ from backend.models.client import ClientModel
 from backend.core.tenant_lock import acquire_tenant_lock
 from backend.models.competitor import CompetitorModel, OfferingMatchModel, SourceModel
 from backend.models.enums import CreatedViaEnum, MatchStatusEnum, OfferingTypeEnum
-from backend.models.observation import SnapshotModel
+from backend.models.observation import ObservationModel, SnapshotModel
 from backend.models.offering import DynamicFieldDefinitionModel, OfferingModel
 from backend.schemas.offering import (
     BulkImportErrorItem,
@@ -43,6 +43,7 @@ from backend.schemas.offering import (
     DynamicFieldDefinitionCreate,
     OfferingCreate,
     OfferingDetailRead,
+    OfferingHistoryRead,
     OfferingPaginationResponse,
     OfferingRead,
     OfferingUpdate,
@@ -416,6 +417,42 @@ class OfferingService:
         )
 
         return detail
+
+    @staticmethod
+    async def history(
+        db: AsyncSession,
+        client_id: uuid.UUID,
+        offering_id: uuid.UUID,
+        limit: int = 500,
+    ) -> List[OfferingHistoryRead]:
+        statement = (
+            select(
+                ObservationModel.offering_match_id,
+                CompetitorModel.id.label("competitor_id"),
+                CompetitorModel.name.label("competitor_name"),
+                SourceModel.id.label("source_id"),
+                SourceModel.name.label("source_name"),
+                OfferingMatchModel.target_url,
+                ObservationModel.observed_price,
+                ObservationModel.currency,
+                ObservationModel.availability,
+                ObservationModel.response_time_ms,
+                ObservationModel.http_status_code,
+                ObservationModel.observed_at,
+            )
+            .join(OfferingMatchModel, ObservationModel.offering_match_id == OfferingMatchModel.id)
+            .join(SourceModel, OfferingMatchModel.source_id == SourceModel.id)
+            .join(CompetitorModel, SourceModel.competitor_id == CompetitorModel.id)
+            .where(
+                OfferingMatchModel.offering_id == offering_id,
+                CompetitorModel.client_id == client_id,
+            )
+            .order_by(ObservationModel.observed_at.desc())
+            .limit(min(max(limit, 1), 500))
+        )
+        result = await db.execute(statement)
+        return [OfferingHistoryRead(**row._mapping) for row in result.all()]
+
 
     # --------------------------------------------------------------------------
     # List & Search Offerings with Filtering & Pagination
