@@ -17,6 +17,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -73,6 +74,19 @@ class JobModel(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         nullable=False,
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_jobs_active_scheduled_match",
+            text("(meta_info->>'offering_match_id')"),
+            unique=True,
+            postgresql_where=text(
+                "job_type = 'SCHEDULED_CRAWL' "
+                "AND status IN ('PENDING', 'RUNNING') "
+                "AND (meta_info->>'offering_match_id') IS NOT NULL"
+            ),
+        ),
     )
 
     # Relationships
