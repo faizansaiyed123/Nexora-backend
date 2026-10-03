@@ -25,6 +25,7 @@ from backend.models.enums import AlertTypeEnum, ClientStatusEnum, JobStatusEnum,
 from backend.models.observation import JobModel, ObservationModel, SnapshotModel
 from backend.models.offering import OfferingModel
 from backend.schemas.alert import AlertRuleUpdate
+from backend.schemas.offering import OfferingUpdate
 from backend.schemas.competitor import CompetitorCreate
 from backend.services.alert_service import AlertService
 from backend.services.browser_proxy import SafeBrowserProxy
@@ -500,7 +501,7 @@ async def test_offering_unarchive_cannot_bypass_quota_under_concurrency():
                     session,
                     graph["client_id"],
                     offering_id,
-                    __import__("backend.schemas.offering", fromlist=["OfferingUpdate"]).OfferingUpdate(is_archived=False),
+                    OfferingUpdate(is_archived=False),
                 )
                 return "created"
             except Exception as exc:
@@ -508,7 +509,7 @@ async def test_offering_unarchive_cannot_bypass_quota_under_concurrency():
                 return getattr(exc, "status_code", type(exc).__name__)
 
     results = await asyncio.gather(*(restore(offering_id) for offering_id in archived_ids))
-    assert sorted(results, key=str) == ["created", 402]
+    assert sorted((str(result) for result in results)) == ["402", "created"]
 
     async with AsyncSessionLocal() as session:
         active_count = await session.scalar(
