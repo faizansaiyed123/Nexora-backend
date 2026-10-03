@@ -36,7 +36,7 @@ router = APIRouter()
     status_code=status.HTTP_200_OK,
     summary="Analyze Client Website & Discover Offerings",
     description=(
-        "Safely crawls the client's provided website URL (with SSRF protection), "
+        "Safely crawls the client's provided website URL synchronously in the request (with SSRF protection), "
         "extracts products, services, or plans via JSON-LD/OpenGraph/SPA state, "
         "persists new/updated offerings into the client's catalog, auto-discovers dynamic fields, "
         "and updates the discovery Job record."
