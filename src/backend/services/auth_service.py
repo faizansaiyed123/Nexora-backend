@@ -19,10 +19,12 @@ from backend.core.exceptions import (
 )
 from backend.core.rate_limit import TokenSessionStore
 from backend.core.security import (
+    DUMMY_PASSWORD_HASH,
     create_access_token,
     generate_secure_token,
     get_password_hash,
     hash_token,
+    password_needs_rehash,
     verify_password,
 )
 from backend.models.client import ClientModel, UserModel
@@ -232,10 +234,8 @@ class AuthService:
         )
         user = result.scalar_one_or_none()
 
-        dummy_hash = "$argon2id$v=19$m=65536,t=3,p=4$dummy_salt_for_timing$dummy_hash_value"
-
         if not user:
-            verify_password(data.password, dummy_hash)
+            verify_password(data.password, DUMMY_PASSWORD_HASH)
             raise AuthenticationException(
                 "Invalid email or password.",
                 code="INVALID_CREDENTIALS",
@@ -269,6 +269,9 @@ class AuthService:
                 "Please verify your email address before logging in.",
                 code="EMAIL_NOT_VERIFIED",
             )
+
+        if password_needs_rehash(user.hashed_password):
+            user.hashed_password = get_password_hash(data.password)
 
         await AuditService.log_security_event(
             session=session,
