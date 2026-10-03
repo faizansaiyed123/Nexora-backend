@@ -591,7 +591,7 @@ async def run_collection(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail={
                 "message": "Collection failed.",
-                "error": str(exc),
+                "error": "Collection failed.",
                 "job_id": str(failed_job.id),
             },
         )
