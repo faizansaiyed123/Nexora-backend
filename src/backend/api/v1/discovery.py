@@ -24,6 +24,10 @@ from backend.schemas.discovery import (
 )
 from backend.schemas.errors import ErrorResponse
 from backend.services.discovery_service import WebsiteDiscoveryService
+from backend.models.enums import JobStatusEnum, JobTypeEnum
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+from backend.models.observation import JobModel
 
 router = APIRouter()
 
@@ -57,6 +61,32 @@ async def run_website_discovery(
         client_id=auth_ctx.client_id,
         request=request,
     )
+
+
+@router.get(
+    "/jobs",
+    response_model=list[DiscoveryJobResponse],
+    status_code=status.HTTP_200_OK,
+)
+async def list_discovery_jobs(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    auth_ctx: Annotated[AuthenticatedUserContext, Depends(require_reader)],
+) -> list[DiscoveryJobResponse]:
+    result = await db.execute(
+        select(JobModel)
+        .join(SourceModel)
+        .join(CompetitorModel)
+        .where(
+            JobModel.job_type == JobTypeEnum.SCHEMA_DISCOVERY,
+            CompetitorModel.client_id == auth_ctx.client_id,
+        )
+        .order_by(JobModel.created_at.desc())
+        .limit(50)
+    )
+    return [
+        await WebsiteDiscoveryService.get_discovery_job(db=db, job_id=job.id, client_id=auth_ctx.client_id)
+        for job in result.scalars().all()
+    ]
 
 
 @router.get(
