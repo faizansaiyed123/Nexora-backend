@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.models.client import ClientModel
+from backend.core.tenant_lock import acquire_tenant_lock
 from backend.models.competitor import CompetitorModel, OfferingMatchModel, SourceModel
 from backend.models.enums import CreatedViaEnum, MatchStatusEnum, OfferingTypeEnum
 from backend.models.observation import SnapshotModel
@@ -237,6 +238,8 @@ class OfferingService:
         Creates a single offering with SSRF validation, JSONB sanitization,
         quota checking, and automatic dynamic field discovery.
         """
+        await acquire_tenant_lock(db, client_id, "offering_quota")
+
         # 1. Enforce plan limit
         await OfferingService._check_catalog_limit(db, client_id, adding_count=1)
 
@@ -706,6 +709,8 @@ class OfferingService:
         Validates URLs, sanitizes JSONB attributes, discovers dynamic schemas,
         and provides index-attributed error feedback for any failed rows.
         """
+        await acquire_tenant_lock(db, client_id, "offering_quota")
+
         items = request.items
         total_items = len(items)
 
