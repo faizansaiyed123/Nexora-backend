@@ -620,6 +620,13 @@ class OfferingService:
 
         update_fields = data.model_dump(exclude_unset=True)
 
+        # Restoring an archived offering consumes an active catalog slot, so
+        # serialize that transition with the same tenant quota lock used by
+        # creation/import paths and re-check capacity while holding the lock.
+        if offering.is_archived and update_fields.get("is_archived") is False:
+            await acquire_tenant_lock(db, client_id, "offering_quota")
+            await OfferingService._check_catalog_limit(db, client_id, adding_count=1)
+
         # Validate URL if updated
         if "url" in update_fields and update_fields["url"] is not None:
             try:
