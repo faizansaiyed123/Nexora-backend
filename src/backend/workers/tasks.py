@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from celery import shared_task
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import selectinload
 
 from backend.db.session import AsyncSessionLocal
 from backend.models.competitor import OfferingMatchModel, SourceModel
 from backend.models.offering import OfferingModel
 from backend.models.observation import JobModel
+from backend.models.notification import NotificationOutboxModel
 from backend.models.enums import JobStatusEnum, JobTypeEnum
 from backend.services.collection_runner import CollectionRunner
+from backend.workers.email_tasks import send_competitive_alert_email_async
 
 
 async def _enqueue_monitored_match_jobs() -> list[str]:
@@ -38,29 +42,24 @@ async def _enqueue_monitored_match_jobs() -> list[str]:
         for match in matches:
             if match.offering is None or match.source is None:
                 continue
-            existing = await session.scalar(
-                select(JobModel.id).where(
-                    JobModel.source_id == match.source_id,
-                    JobModel.job_type == JobTypeEnum.SCHEDULED_CRAWL,
-                    JobModel.status.in_([JobStatusEnum.PENDING, JobStatusEnum.RUNNING]),
-                    JobModel.meta_info["offering_match_id"].as_string() == str(match.id),
-                ).limit(1)
+            stmt = (
+                pg_insert(JobModel)
+                .values(
+                    source_id=match.source_id,
+                    job_type=JobTypeEnum.SCHEDULED_CRAWL,
+                    status=JobStatusEnum.PENDING,
+                    meta_info={
+                        "offering_match_id": str(match.id),
+                        "offering_id": str(match.offering_id),
+                        "scheduled": True,
+                    },
+                )
+                .on_conflict_do_nothing()
+                .returning(JobModel.id)
             )
-            if existing is not None:
-                continue
-            job = JobModel(
-                source_id=match.source_id,
-                job_type=JobTypeEnum.SCHEDULED_CRAWL,
-                status=JobStatusEnum.PENDING,
-                meta_info={
-                    "offering_match_id": str(match.id),
-                    "offering_id": str(match.offering_id),
-                    "scheduled": True,
-                },
-            )
-            session.add(job)
-            await session.flush()
-            job_ids.append(str(job.id))
+            inserted_id = await session.scalar(stmt)
+            if inserted_id is not None:
+                job_ids.append(str(inserted_id))
 
         await session.commit()
         return job_ids
@@ -88,3 +87,87 @@ def execute_collection_job(self, job_id: str) -> str:
             return job.status.value
 
     return asyncio.run(run_job())
+
+
+async def _dispatch_pending_notifications(batch_size: int = 25) -> int:
+    now = datetime.now(timezone.utc)
+    stale_before = now - timedelta(minutes=10)
+    sent = 0
+
+    for _ in range(batch_size):
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(NotificationOutboxModel)
+                .where(
+                    (
+                        (NotificationOutboxModel.status == "PENDING")
+                        & (NotificationOutboxModel.next_attempt_at <= now)
+                    )
+                    | (
+                        (NotificationOutboxModel.status == "SENDING")
+                        & (NotificationOutboxModel.locked_at.is_not(None))
+                        & (NotificationOutboxModel.locked_at < stale_before)
+                    )
+                )
+                .order_by(NotificationOutboxModel.created_at.asc())
+                .with_for_update(skip_locked=True)
+                .limit(1)
+            )
+            notification = result.scalar_one_or_none()
+            if notification is None:
+                await session.rollback()
+                break
+
+            notification.status = "SENDING"
+            notification.locked_at = now
+            notification.attempts += 1
+            await session.commit()
+
+            try:
+                if notification.channel != "email":
+                    raise RuntimeError("Unsupported notification channel.")
+                await send_competitive_alert_email_async(
+                    notification.recipient,
+                    notification.title,
+                    notification.message,
+                )
+            except Exception as exc:
+                retry_at = now + timedelta(minutes=min(60, 2 ** min(notification.attempts, 6)))
+                async with AsyncSessionLocal() as update_session:
+                    await update_session.execute(
+                        update(NotificationOutboxModel)
+                        .where(
+                            NotificationOutboxModel.id == notification.id,
+                            NotificationOutboxModel.status == "SENDING",
+                        )
+                        .values(
+                            status="PENDING",
+                            locked_at=None,
+                            last_error=f"{type(exc).__name__}: notification delivery failed",
+                            next_attempt_at=retry_at,
+                        )
+                    )
+                    await update_session.commit()
+            else:
+                async with AsyncSessionLocal() as update_session:
+                    await update_session.execute(
+                        update(NotificationOutboxModel)
+                        .where(
+                            NotificationOutboxModel.id == notification.id,
+                            NotificationOutboxModel.status == "SENDING",
+                        )
+                        .values(
+                            status="SENT",
+                            locked_at=None,
+                            sent_at=datetime.now(timezone.utc),
+                            last_error=None,
+                        )
+                    )
+                    await update_session.commit()
+                sent += 1
+    return sent
+
+
+@shared_task(name="backend.workers.tasks.dispatch_pending_notifications")
+def dispatch_pending_notifications() -> dict[str, int]:
+    return {"sent": asyncio.run(_dispatch_pending_notifications())}
