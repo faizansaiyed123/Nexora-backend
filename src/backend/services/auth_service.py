@@ -17,7 +17,7 @@ from backend.core.exceptions import (
     NotFoundException,
     ValidationException,
 )
-from backend.core.rate_limit import TokenSessionStore
+from backend.core.rate_limit import AuthorizationStateStore, TokenSessionStore
 from backend.core.security import (
     DUMMY_PASSWORD_HASH,
     create_access_token,
@@ -370,6 +370,7 @@ class AuthService:
             client_id=user.client_id,
             role=user.role,
             email=user.email,
+            auth_version=user.auth_version,
         )
 
         new_refresh_payload = f"{user.id}:{session_id}:{new_raw_token}"
