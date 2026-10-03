@@ -12,21 +12,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.deps import (
     AuthenticatedUserContext,
-    require_admin,
     require_analyst,
     require_reader,
 )
 from backend.db.session import get_db
-from backend.models.enums import RoleEnum
 from backend.schemas.discovery import (
     DiscoveryJobResponse,
     DiscoveryRunRequest,
 )
 from backend.schemas.errors import ErrorResponse
 from backend.services.discovery_service import WebsiteDiscoveryService
-from backend.models.enums import JobStatusEnum, JobTypeEnum
+from backend.models.enums import JobTypeEnum
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 from backend.models.observation import JobModel
 from backend.models.competitor import CompetitorModel, SourceModel
 
