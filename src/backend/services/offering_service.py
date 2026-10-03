@@ -67,7 +67,7 @@ class OfferingService:
         """
         # Fetch client's max_tracked_offerings
         client_res = await db.execute(
-            select(ClientModel.max_tracked_offerings).where(ClientModel.id == client_id)
+            select(ClientModel.max_tracked_offerings).where(ClientModel.id == client_id).with_for_update()
         )
         max_allowed = client_res.scalar_one_or_none()
         if max_allowed is None:
@@ -712,7 +712,7 @@ class OfferingService:
         # Plan limit check for total batch
         # Count current active offerings
         client_res = await db.execute(
-            select(ClientModel.max_tracked_offerings).where(ClientModel.id == client_id)
+            select(ClientModel.max_tracked_offerings).where(ClientModel.id == client_id).with_for_update()
         )
         max_allowed = client_res.scalar_one_or_none() or 500
 
