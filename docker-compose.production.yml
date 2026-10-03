@@ -2,7 +2,7 @@
 # Supply secrets and CORS/URL settings through the deployment environment.
 services:
   postgres:
-    image: postgres:18-alpine
+    image: postgres:18.6-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
@@ -18,7 +18,7 @@ services:
     networks: [internal]
 
   redis:
-    image: redis:7.4-alpine
+    image: redis:7.4.11-alpine
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
