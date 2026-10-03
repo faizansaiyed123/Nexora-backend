@@ -344,6 +344,34 @@ async def list_offerings(
 
 
 @router.get(
+    "/{offering_id}/history",
+    response_model=object,
+    summary="Get Offering Observation History",
+    dependencies=[Depends(require_analyst)],
+)
+async def get_offering_history(
+    offering_id: uuid.UUID,
+    auth_ctx: Annotated[
+        AuthenticatedUserContext,
+        Depends(get_current_user_claims),
+    ],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    match_id: Optional[uuid.UUID] = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=100),
+):
+    history = await OfferingService.observation_history(
+        db=db,
+        client_id=auth_ctx.client_id,
+        offering_id=offering_id,
+        match_id=match_id,
+        page=page,
+        page_size=page_size,
+    )
+    return history
+
+
+@router.get(
     "/{offering_id}",
     response_model=OfferingDetailRead,
     summary="Get Offering Details",
