@@ -52,33 +52,39 @@ async def get_current_user_claims(
         raise AuthenticationException("Malformed token claims.", code="INVALID_TOKEN_CLAIMS")
 
     cached_version = await AuthorizationStateStore.get_cached_version(str(user_id))
-    if cached_version is None:
-        try:
-            result = await db.execute(
-                select(UserModel.auth_version, UserModel.is_active).where(
-                    UserModel.id == user_id,
-                    UserModel.client_id == client_id,
-                )
+    if cached_version == token_version:
+        return AuthenticatedUserContext(
+            user_id=user_id,
+            client_id=client_id,
+            role=role,
+            email=email,
+            jti=jti,
+        )
+
+    # A cache mismatch is ambiguous: the cache can be stale after a role/password/
+    # activation change, while the token can also be stale. Resolve disagreement
+    # against authoritative DB state and refresh the cache.
+    try:
+        result = await db.execute(
+            select(UserModel.auth_version, UserModel.is_active).where(
+                UserModel.id == user_id,
+                UserModel.client_id == client_id,
             )
-            state = result.one_or_none()
-        except Exception as exc:
-            raise AuthenticationException(
-                "Authentication state could not be verified.",
-                code="AUTH_STATE_UNAVAILABLE",
-            ) from exc
-        if state is None or not state.is_active:
-            raise AuthenticationException(
-                "User account not found or disabled.",
-                code="USER_DISABLED",
-            )
-        current_version = int(state.auth_version or 0)
-        if current_version != token_version:
-            raise AuthenticationException(
-                "Session is no longer valid.",
-                code="TOKEN_REVOKED",
-            )
-        await AuthorizationStateStore.set_version(str(user_id), current_version)
-    elif cached_version != token_version:
+        )
+        state = result.one_or_none()
+    except Exception as exc:
+        raise AuthenticationException(
+            "Authentication state could not be verified.",
+            code="AUTH_STATE_UNAVAILABLE",
+        ) from exc
+    if state is None or not state.is_active:
+        raise AuthenticationException(
+            "User account not found or disabled.",
+            code="USER_DISABLED",
+        )
+    current_version = int(state.auth_version or 0)
+    await AuthorizationStateStore.set_version(str(user_id), current_version)
+    if current_version != token_version:
         raise AuthenticationException(
             "Session is no longer valid.",
             code="TOKEN_REVOKED",
