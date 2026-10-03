@@ -719,6 +719,34 @@ async def test_discovery_history_restores_persisted_items():
 
 
 @pytest.mark.asyncio
+async def test_scheduler_reaps_legacy_on_demand_running_job_without_lease():
+    graph = await _tenant_graph()
+    async with AsyncSessionLocal() as session:
+        job = JobModel(
+            source_id=graph["source_id"],
+            job_type=JobTypeEnum.ON_DEMAND_REFRESH,
+            status=JobStatusEnum.RUNNING,
+            started_at=datetime.now(timezone.utc) - timedelta(seconds=7200),
+            lease_expires_at=None,
+            meta_info={"offering_match_id": str(graph["match_id"])},
+        )
+        session.add(job)
+        await session.commit()
+        job_id = job.id
+
+    await _enqueue_monitored_match_jobs()
+
+    async with AsyncSessionLocal() as session:
+        stale_job = await session.scalar(
+            select(JobModel).where(JobModel.id == job_id)
+        )
+
+    assert stale_job is not None
+    assert stale_job.status == JobStatusEnum.FAILED
+    assert stale_job.lease_expires_at is None
+
+
+@pytest.mark.asyncio
 async def test_scheduler_reaps_legacy_running_job_without_lease():
     graph = await _tenant_graph()
     async with AsyncSessionLocal() as session:
