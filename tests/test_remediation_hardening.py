@@ -13,7 +13,7 @@ import httpx
 import pytest
 from sqlalchemy import func, select
 
-from backend.core.deps import AuthenticatedUserContext
+from backend.core.deps import AuthenticatedUserContext, get_current_authorized_user, invalidate_authorization_cache
 from backend.core.exceptions import ForbiddenException, RateLimitException
 from backend.core.rate_limit import DistributedRateLimiter
 from backend.db.session import AsyncSessionLocal
@@ -184,6 +184,59 @@ async def test_collection_exception_messages_are_sanitized(monkeypatch):
     assert "secret://" not in (result.error or "")
     assert "database-password" not in (result.error or "")
     assert result.error == "Target could not be reached safely."
+
+
+@pytest.mark.asyncio
+async def test_authorization_cache_rejects_disabled_or_role_changed_user():
+    graph = await _tenant_graph()
+    async with AsyncSessionLocal() as session:
+        user = __import__("backend.models.client", fromlist=["UserModel"]).UserModel(
+            client_id=graph["client_id"],
+            email=f"authz-{uuid4().hex}@example.com",
+            full_name="Authz Test",
+            hashed_password="test",
+            role=RoleEnum.ORG_ADMIN,
+            is_active=True,
+            email_verified=True,
+        )
+        session.add(user)
+        await session.commit()
+        user_id = user.id
+
+    context = AuthenticatedUserContext(
+        user_id=user_id,
+        client_id=graph["client_id"],
+        role=RoleEnum.ORG_ADMIN,
+        email=f"authz-{user_id}@example.com",
+        jti=str(uuid4()),
+    )
+
+    async with AsyncSessionLocal() as session:
+        await get_current_authorized_user(context, session)
+
+    async with AsyncSessionLocal() as session:
+        db_user = await session.get(__import__("backend.models.client", fromlist=["UserModel"]).UserModel, user_id)
+        db_user.role = RoleEnum.VIEWER
+        await session.commit()
+
+    invalidate_authorization_cache(user_id, graph["client_id"])
+
+    async with AsyncSessionLocal() as session:
+        with pytest.raises(Exception) as exc:
+            await get_current_authorized_user(context, session)
+        assert "AUTHORIZATION_STALE" in str(exc.value)
+
+    async with AsyncSessionLocal() as session:
+        db_user = await session.get(__import__("backend.models.client", fromlist=["UserModel"]).UserModel, user_id)
+        db_user.is_active = False
+        await session.commit()
+
+    invalidate_authorization_cache(user_id, graph["client_id"])
+
+    async with AsyncSessionLocal() as session:
+        with pytest.raises(Exception) as exc:
+            await get_current_authorized_user(context, session)
+        assert "USER_DISABLED" in str(exc.value)
 
 
 @pytest.mark.asyncio
