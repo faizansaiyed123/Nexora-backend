@@ -18,6 +18,7 @@ async def _send_email(
     to_email: str,
     subject: str,
     body: str,
+    message_id: str | None = None,
 ) -> None:
     if not settings.smtp_username or not settings.smtp_password:
         logger.error("SMTP credentials are not configured.")
@@ -29,6 +30,8 @@ async def _send_email(
     )
     message["To"] = to_email
     message["Subject"] = subject
+    if message_id:
+        message["Message-ID"] = f"<nexora-{message_id}@nexora.local>"
     message.set_content(body)
 
     try:
@@ -145,6 +148,8 @@ async def send_competitive_alert_email_async(
     email: str,
     alert_title: str,
     message: str,
+    *,
+    message_id: str | None = None,
 ) -> None:
     subject = f"Nexora Competitive Alert: {alert_title}"
     body = f"""Hello,
@@ -164,4 +169,5 @@ Regards,
         to_email=email,
         subject=subject,
         body=body,
+        message_id=message_id,
     )
