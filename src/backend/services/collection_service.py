@@ -169,7 +169,7 @@ class CollectionService:
                                     availability=None,
                                     attributes={"redirect_blocked": True},
                                     extraction_status="SECURITY_BLOCKED",
-                                    error=str(exc),
+                                    error=safe_collection_error(exc),
                                 )
 
                         if response is None:
