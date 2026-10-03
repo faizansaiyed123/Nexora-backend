@@ -278,8 +278,10 @@ async def test_alert_outbox_rolls_back_with_transaction():
             is_active=True,
         )
         session.add(rule)
-        await session.flush()
+        await session.commit()
+        rule_id = rule.id
 
+    async with AsyncSessionLocal() as session:
         await AlertService.evaluate_and_trigger(
             session,
             client_id=graph["client_id"],
