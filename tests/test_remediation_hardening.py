@@ -478,7 +478,7 @@ async def test_alert_notifications_are_transactional_outbox_records():
             setup,
             alert_log=log,
             client_id=client.id,
-            channels=rule.target_channels,
+            channels={"email": ["person@example.com"]},
             title=log.title,
             message=log.message,
         )
