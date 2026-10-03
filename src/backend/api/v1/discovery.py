@@ -28,6 +28,7 @@ from backend.models.enums import JobStatusEnum, JobTypeEnum
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from backend.models.observation import JobModel
+from backend.models.competitor import CompetitorModel, SourceModel
 
 router = APIRouter()
 
