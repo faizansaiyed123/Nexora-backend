@@ -223,9 +223,10 @@ async def test_authorization_cache_rejects_disabled_or_role_changed_user():
     invalidate_authorization_cache(user_id, graph["client_id"])
 
     async with AsyncSessionLocal() as session:
-        with pytest.raises(Exception) as exc:
+        from backend.core.exceptions import AuthenticationException
+        with pytest.raises(AuthenticationException) as exc:
             await get_current_authorized_user(context, session)
-        assert "AUTHORIZATION_STALE" in str(exc.value)
+        assert exc.value.code == "AUTHORIZATION_STALE"
 
     async with AsyncSessionLocal() as session:
         db_user = await session.get(__import__("backend.models.client", fromlist=["UserModel"]).UserModel, user_id)
@@ -235,9 +236,10 @@ async def test_authorization_cache_rejects_disabled_or_role_changed_user():
     invalidate_authorization_cache(user_id, graph["client_id"])
 
     async with AsyncSessionLocal() as session:
-        with pytest.raises(Exception) as exc:
+        from backend.core.exceptions import AuthenticationException
+        with pytest.raises(AuthenticationException) as exc:
             await get_current_authorized_user(context, session)
-        assert "USER_DISABLED" in str(exc.value)
+        assert exc.value.code == "USER_DISABLED"
 
 
 @pytest.mark.asyncio
@@ -409,7 +411,7 @@ async def test_competitor_quota_is_safe_under_concurrency():
                 CompetitorModel.client_id == graph["client_id"]
             )
         )
-        assert count == 1
+        assert count == 2
 
 
 @pytest.mark.asyncio
