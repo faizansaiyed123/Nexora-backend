@@ -63,6 +63,28 @@ class UrlSecurityService:
         return any(ip_obj in net for net in BLOCKED_IP_NETWORKS)
 
     @classmethod
+    def resolve_and_validate_host(cls, hostname: str, port: int) -> str:
+        """Resolve a hostname and return one validated public IP for the actual connection."""
+        try:
+            addr_info = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
+        except socket.gaierror as exc:
+            raise SecurityValidationError(f"Domain '{hostname}' could not be resolved safely.") from exc
+
+        candidates: list[str] = []
+        for _, _, _, _, sockaddr in addr_info:
+            ip_str = sockaddr[0]
+            if cls.is_ip_blocked(ip_str):
+                raise SecurityValidationError(
+                    f"Target host resolves to a restricted private or link-local address ({ip_str})."
+                )
+            if ip_str not in candidates:
+                candidates.append(ip_str)
+
+        if not candidates:
+            raise SecurityValidationError(f"Domain '{hostname}' did not resolve to a usable address.")
+        return candidates[0]
+
+    @classmethod
     def validate_url(cls, url: Optional[str], allow_empty: bool = True) -> Optional[str]:
         """
         Validates that a URL is safe to persist and fetch:
