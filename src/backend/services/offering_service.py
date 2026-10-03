@@ -30,7 +30,7 @@ from sqlalchemy.orm import selectinload
 from backend.models.client import ClientModel
 from backend.models.competitor import CompetitorModel, OfferingMatchModel, SourceModel
 from backend.models.enums import CreatedViaEnum, MatchStatusEnum, OfferingTypeEnum
-from backend.models.observation import SnapshotModel
+from backend.models.observation import ObservationModel, SnapshotModel
 from backend.models.offering import DynamicFieldDefinitionModel, OfferingModel
 from backend.schemas.offering import (
     BulkImportErrorItem,
@@ -47,6 +47,7 @@ from backend.schemas.offering import (
     OfferingUpdate,
     ToggleMonitoringResponse,
 )
+from backend.schemas.observation import ObservationHistoryItem, ObservationHistoryResponse
 from backend.services.url_security import SecurityValidationError, UrlSecurityService
 
 
@@ -413,6 +414,77 @@ class OfferingService:
         )
 
         return detail
+
+    @staticmethod
+    async def observation_history(
+        db: AsyncSession,
+        client_id: uuid.UUID,
+        offering_id: uuid.UUID,
+        match_id: Optional[uuid.UUID] = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> ObservationHistoryResponse:
+        page = max(1, page)
+        page_size = min(100, max(1, page_size))
+
+        filters = [
+            OfferingModel.id == offering_id,
+            OfferingModel.client_id == client_id,
+            OfferingMatchModel.is_active.is_(True),
+        ]
+        if match_id is not None:
+            filters.append(OfferingMatchModel.id == match_id)
+
+        total = await db.scalar(
+            select(func.count(ObservationModel.id))
+            .select_from(ObservationModel)
+            .join(OfferingMatchModel, ObservationModel.offering_match_id == OfferingMatchModel.id)
+            .join(OfferingModel, OfferingMatchModel.offering_id == OfferingModel.id)
+            .join(SourceModel, OfferingMatchModel.source_id == SourceModel.id)
+            .join(CompetitorModel, SourceModel.competitor_id == CompetitorModel.id)
+            .where(*filters)
+        ) or 0
+
+        result = await db.execute(
+            select(ObservationModel, OfferingMatchModel, SourceModel, CompetitorModel)
+            .join(OfferingMatchModel, ObservationModel.offering_match_id == OfferingMatchModel.id)
+            .join(OfferingModel, OfferingMatchModel.offering_id == OfferingModel.id)
+            .join(SourceModel, OfferingMatchModel.source_id == SourceModel.id)
+            .join(CompetitorModel, SourceModel.competitor_id == CompetitorModel.id)
+            .where(*filters)
+            .order_by(ObservationModel.observed_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+
+        items = [
+            ObservationHistoryItem(
+                id=observation.id,
+                offering_match_id=observation.offering_match_id,
+                competitor_id=competitor.id,
+                competitor_name=competitor.name,
+                source_id=source.id,
+                source_name=source.name,
+                target_url=match.target_url,
+                observed_at=observation.observed_at,
+                observed_price=observation.observed_price,
+                currency=observation.currency,
+                availability=observation.availability,
+                response_time_ms=observation.response_time_ms,
+                http_status_code=observation.http_status_code,
+            )
+            for observation, match, source, competitor in result.all()
+        ]
+
+        total_pages = math.ceil(total / page_size) if total else 0
+        return ObservationHistoryResponse(
+            items=items,
+            total_count=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+            has_more=page < total_pages,
+        )
 
     # --------------------------------------------------------------------------
     # List & Search Offerings with Filtering & Pagination
