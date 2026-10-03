@@ -473,6 +473,54 @@ async def test_offering_quota_is_safe_under_concurrency():
 
 
 @pytest.mark.asyncio
+async def test_offering_unarchive_cannot_bypass_quota_under_concurrency():
+    graph = await _tenant_graph(max_offerings=2)
+    archived_ids = []
+    async with AsyncSessionLocal() as session:
+        for index in range(2):
+            archived = OfferingModel(
+                client_id=graph["client_id"],
+                name=f"Archived-{index}-{uuid4().hex[:6]}",
+                offering_type="PRODUCT",
+                current_price=Decimal("10"),
+                currency="USD",
+                market="US",
+                is_archived=True,
+                is_monitored=False,
+            )
+            session.add(archived)
+            await session.flush()
+            archived_ids.append(archived.id)
+        await session.commit()
+
+    async def restore(offering_id):
+        async with AsyncSessionLocal() as session:
+            try:
+                await OfferingService.update(
+                    session,
+                    graph["client_id"],
+                    offering_id,
+                    __import__("backend.schemas.offering", fromlist=["OfferingUpdate"]).OfferingUpdate(is_archived=False),
+                )
+                return "created"
+            except Exception as exc:
+                await session.rollback()
+                return getattr(exc, "status_code", type(exc).__name__)
+
+    results = await asyncio.gather(*(restore(offering_id) for offering_id in archived_ids))
+    assert sorted(results, key=str) == ["created", 402]
+
+    async with AsyncSessionLocal() as session:
+        active_count = await session.scalar(
+            select(func.count(OfferingModel.id)).where(
+                OfferingModel.client_id == graph["client_id"],
+                OfferingModel.is_archived.is_(False),
+            )
+        )
+        assert active_count == 2
+
+
+@pytest.mark.asyncio
 async def test_collection_job_claim_has_one_executor():
     graph = await _tenant_graph()
     async with AsyncSessionLocal() as session:
