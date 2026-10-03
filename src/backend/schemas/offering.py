@@ -592,6 +592,23 @@ class OfferingRead(OfferingBase):
     )
 
 
+class OfferingHistoryRead(BaseModel):
+    offering_match_id: uuid.UUID
+    competitor_id: uuid.UUID
+    competitor_name: str
+    source_id: uuid.UUID
+    source_name: str
+    target_url: str
+    observed_price: Optional[Decimal] = None
+    currency: str
+    availability: AvailabilityStatusEnum
+    response_time_ms: int
+    http_status_code: int
+    observed_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class OfferingDetailRead(OfferingRead):
     matches: List[CompetitorMatchSummary] = Field(
         default_factory=list,
