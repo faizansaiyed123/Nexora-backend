@@ -26,16 +26,16 @@ async def render_page(url: str, timeout_seconds: int = 20) -> Optional[str]:
                 try:
                     page = await browser.new_page()
 
-                async def guard_route(route) -> None:
-                    try:
-                        UrlSecurityService.validate_url(route.request.url)
-                    except SecurityValidationError:
-                        await route.abort()
-                        return
-                    await route.continue_()
+                    async def guard_route(route) -> None:
+                        try:
+                            UrlSecurityService.validate_url(route.request.url)
+                        except SecurityValidationError:
+                            await route.abort()
+                            return
+                        await route.continue_()
 
-                await page.route("**/*", guard_route)
-                await page.goto(safe_url, wait_until="networkidle", timeout=timeout_seconds * 1000)
+                    await page.route("**/*", guard_route)
+                    await page.goto(safe_url, wait_until="networkidle", timeout=timeout_seconds * 1000)
                     return await page.content()
                 finally:
                     await browser.close()
