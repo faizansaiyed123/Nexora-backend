@@ -517,7 +517,7 @@ async def test_alert_notifications_are_transactional_outbox_records():
         setup.add(log)
         await setup.flush()
 
-        await AlertService._enqueue_notifications(
+        staged_count = await AlertService._enqueue_notifications(
             setup,
             alert_log=log,
             client_id=client.id,
@@ -525,8 +525,8 @@ async def test_alert_notifications_are_transactional_outbox_records():
             title=log.title,
             message=log.message,
         )
+        assert staged_count == 1
         assert any(isinstance(item, NotificationOutboxModel) for item in setup.new)
-        await setup.flush()
 
         outbox_count = await setup.scalar(
             select(func.count(NotificationOutboxModel.id))
