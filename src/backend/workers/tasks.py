@@ -42,10 +42,11 @@ async def _recover_stale_collection_jobs(session) -> int:
             ),
         )
         .values(
-            status=JobStatusEnum.PENDING,
-            started_at=None,
-            completed_at=None,
+            status=JobStatusEnum.FAILED,
+            started_at=JobModel.started_at,
+            completed_at=now,
             lease_expires_at=None,
+            error_message="Collection worker lease expired.",
         )
     )
     result = await session.execute(stmt)
