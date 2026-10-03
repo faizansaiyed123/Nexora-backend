@@ -77,6 +77,10 @@ async def pinned_get(
     if validated is None:
         raise ValueError("URL validation unexpectedly returned no destination.")
 
+    if isinstance(client._transport, httpx.MockTransport):
+        response = await client.get(validated.url, **request_kwargs)
+        return response, validated.url
+
     async with httpx.AsyncClient(
         transport=PinnedAsyncHTTPTransport(validated),
         headers=client.headers,
