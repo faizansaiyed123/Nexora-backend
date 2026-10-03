@@ -31,6 +31,29 @@ def upgrade() -> None:
     if "lease_token" not in job_columns:
         op.add_column("jobs", sa.Column("lease_token", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True))
 
+    # Preserve one active scheduled job per match before adding the invariant.
+    bind.execute(sa.text("""
+        WITH ranked AS (
+            SELECT id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY (meta_info->>'offering_match_id')
+                       ORDER BY created_at ASC, id ASC
+                   ) AS rn
+            FROM jobs
+            WHERE job_type = 'SCHEDULED_CRAWL'
+              AND status IN ('PENDING', 'RUNNING')
+              AND (meta_info->>'offering_match_id') IS NOT NULL
+        )
+        UPDATE jobs
+        SET status = 'FAILED',
+            error_message = 'Duplicate scheduled job superseded during migration.',
+            failed_items = 1,
+            total_items_processed = 1,
+            completed_at = NOW(),
+            lease_expires_at = NULL
+        WHERE id IN (SELECT id FROM ranked WHERE rn > 1)
+    """))
+
     indexes = {i["name"] for i in inspector.get_indexes("jobs")}
     if "uq_jobs_active_scheduled_match" not in indexes:
         op.create_index(
