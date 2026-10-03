@@ -7,6 +7,7 @@ internal network probing, link-local / cloud metadata attacks, and payload bombi
 import ipaddress
 import re
 import socket
+from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
@@ -42,6 +43,14 @@ ATTR_KEY_REGEX = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 HTML_SCRIPT_PATTERN = re.compile(r"<[^>]*script[^>]*>|javascript:|data:text/html", re.IGNORECASE)
 
 
+@dataclass(frozen=True)
+class ValidatedURL:
+    url: str
+    hostname: str
+    port: int
+    ip_address: str
+
+
 class SecurityValidationError(ValueError):
     """Raised when URL or attribute fails security/SSRF validation."""
     pass
@@ -63,37 +72,27 @@ class UrlSecurityService:
         return any(ip_obj in net for net in BLOCKED_IP_NETWORKS)
 
     @classmethod
-    def validate_url(cls, url: Optional[str], allow_empty: bool = True) -> Optional[str]:
-        """
-        Validates that a URL is safe to persist and fetch:
-        1. Must use http or https scheme. Rejects file, ftp, gopher, data, javascript, etc.
-        2. Must NOT contain embedded credentials (user:pass@host).
-        3. Must have a valid, resolvable hostname.
-        4. Resolved IP must NOT belong to loopback, private, link-local, or cloud metadata ranges.
-        5. Canonicalizes and strips tracking parameters (utm_*, fbclid, etc.).
-        """
+    def resolve_and_validate_url(
+        cls,
+        url: Optional[str],
+        allow_empty: bool = True,
+    ) -> Optional["ValidatedURL"]:
+        """Validate and return the exact destination IP that the network layer must use."""
         if not url or not url.strip():
             if allow_empty:
                 return None
             raise SecurityValidationError("URL cannot be empty.")
 
         clean_url = url.strip()
-
-        # Reject explicitly dangerous non-HTTP URI schemes
         lowered_raw = clean_url.lower()
         if lowered_raw.startswith(("file:", "ftp:", "gopher:", "data:", "javascript:", "blob:", "about:", "ws:", "wss:")):
             raise SecurityValidationError("Invalid URL protocol. Only HTTP and HTTPS are permitted.")
-
         if not clean_url.startswith(("http://", "https://")):
             clean_url = f"https://{clean_url}"
 
         parsed = urlparse(clean_url)
         if parsed.scheme.lower() not in ("http", "https"):
-            raise SecurityValidationError(
-                f"Invalid URL protocol '{parsed.scheme}'. Only HTTP and HTTPS are permitted."
-            )
-
-        # Reject URLs containing username or password credentials
+            raise SecurityValidationError("Only HTTP and HTTPS URLs are permitted.")
         if parsed.username or parsed.password:
             raise SecurityValidationError("URLs containing embedded username or password credentials are not permitted.")
 
@@ -101,7 +100,6 @@ class UrlSecurityService:
         if not hostname:
             raise SecurityValidationError("Invalid URL: Hostname is missing or malformed.")
 
-        # Disallow explicit localhost or metadata hostnames
         lowered_host = hostname.lower()
         if lowered_host in (
             "localhost",
@@ -113,24 +111,37 @@ class UrlSecurityService:
         ):
             raise SecurityValidationError("Access to local or cloud internal hosts is strictly forbidden.")
 
-        # Resolve hostname to verify against blocked CIDR blocks
+        port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
         try:
-            addr_info = socket.getaddrinfo(hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
-            for family, _, _, _, sockaddr in addr_info:
-                ip_str = sockaddr[0]
-                if cls.is_ip_blocked(ip_str):
-                    raise SecurityValidationError(
-                        f"Target host resolves to a restricted private or link-local address ({ip_str})."
-                    )
-        except socket.gaierror:
-            # If domain has valid TLD and syntax, check for suspicious internal suffixes
-            if "." not in hostname or hostname.endswith((".local", ".internal", ".corp", ".lan", ".localhost")):
-                raise SecurityValidationError(f"Domain '{hostname}' is not a valid or resolvable public domain.")
+            literal_ip = ipaddress.ip_address(hostname.split("%", 1)[0])
+            resolved_ips = [str(literal_ip)]
+        except ValueError:
+            try:
+                addr_info = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
+            except socket.gaierror as exc:
+                raise SecurityValidationError("Target hostname could not be resolved safely.") from exc
+            resolved_ips = list(dict.fromkeys(sockaddr[0] for _, _, _, _, sockaddr in addr_info))
 
-        # Canonicalize URL & strip tracking query parameters
+        if not resolved_ips:
+            raise SecurityValidationError("Target hostname did not resolve to an address.")
+
+        for ip_str in resolved_ips:
+            if cls.is_ip_blocked(ip_str):
+                raise SecurityValidationError("Target host resolves to a restricted private or link-local address.")
+
         clean_query = cls._strip_tracking_params(parsed.query)
-        canonical_parsed = parsed._replace(query=clean_query, fragment="")
-        return urlunparse(canonical_parsed)
+        canonical_url = urlunparse(parsed._replace(query=clean_query, fragment=""))
+        return ValidatedURL(
+            url=canonical_url,
+            hostname=lowered_host,
+            port=port,
+            ip_address=resolved_ips[0],
+        )
+
+    @classmethod
+    def validate_url(cls, url: Optional[str], allow_empty: bool = True) -> Optional[str]:
+        validated = cls.resolve_and_validate_url(url, allow_empty=allow_empty)
+        return validated.url if validated else None
 
     @classmethod
     def _strip_tracking_params(cls, query_string: str) -> str:
