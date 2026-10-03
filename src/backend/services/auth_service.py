@@ -272,6 +272,7 @@ class AuthService:
 
         if password_needs_rehash(user.hashed_password):
             user.hashed_password = get_password_hash(data.password)
+            await session.flush()
 
         await AuditService.log_security_event(
             session=session,
@@ -287,6 +288,7 @@ class AuthService:
             client_id=user.client_id,
             role=user.role,
             email=user.email,
+            auth_version=user.auth_version,
         )
 
         raw_refresh_token = generate_secure_token(48)
@@ -452,6 +454,7 @@ class AuthService:
         user.hashed_password = get_password_hash(
             data.new_password
         )
+        await session.flush()
 
         await TokenSessionStore.revoke_user_sessions(
             str(user.id)
