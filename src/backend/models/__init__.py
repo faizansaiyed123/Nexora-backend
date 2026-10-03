@@ -32,6 +32,7 @@ from backend.models.enums import (
     VerificationStatusEnum,
 )
 from backend.models.observation import JobModel, ObservationModel, SnapshotModel
+from backend.models.notification import NotificationOutboxModel
 from backend.models.offering import DynamicFieldDefinitionModel, OfferingModel
 
 __all__ = [
@@ -71,6 +72,7 @@ __all__ = [
     # Alerting & Notifications
     "AlertRuleModel",
     "AlertLogModel",
+    "NotificationOutboxModel",
     # Compliance & Audit Trail
     "AuditLogModel",
 ]
