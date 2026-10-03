@@ -21,7 +21,7 @@ from backend.db.session import AsyncSessionLocal
 from backend.models.alert import AlertLogModel, AlertRuleModel
 from backend.models.client import ClientModel
 from backend.models.competitor import CompetitorModel, OfferingMatchModel, SourceModel
-from backend.models.enums import AlertTypeEnum, ClientStatusEnum, JobStatusEnum, RoleEnum
+from backend.models.enums import AlertTypeEnum, ClientStatusEnum, JobStatusEnum, JobTypeEnum, RoleEnum
 from backend.models.observation import JobModel, ObservationModel, SnapshotModel
 from backend.models.offering import OfferingModel
 from backend.schemas.alert import AlertRuleUpdate
