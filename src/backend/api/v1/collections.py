@@ -27,6 +27,7 @@ from backend.models.enums import (
 from backend.services.alert_service import AlertService
 from backend.collectors.browser import render_page
 from backend.services.collection_service import CollectionService
+from backend.core.error_messages import safe_collection_error
 from backend.services.source_service import SourceService
 
 
@@ -234,7 +235,7 @@ async def run_collection(
             select(SnapshotModel).where(
                 SnapshotModel.offering_match_id
                 == offering_match_id_val
-            )
+            ).with_for_update()
         )
         snapshot = snapshot_result.scalar_one_or_none()
 
@@ -559,7 +560,7 @@ async def run_collection(
             total_items_processed=1,
             successful_items=0,
             failed_items=1,
-            error_message=str(exc),
+            error_message=safe_collection_error(exc),
             meta_info={
                 "offering_match_id": str(
                     offering_match_id_val
@@ -577,7 +578,7 @@ async def run_collection(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail={
                 "message": "Collection failed.",
-                "error": str(exc),
+                "error": safe_collection_error(exc),
                 "job_id": str(failed_job.id),
             },
         )
