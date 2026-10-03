@@ -120,11 +120,6 @@ class CollectionService:
         Fetch URL and perform generic extraction.
         """
 
-        try:
-            current_url = UrlSecurityService.validate_url(url)
-        except SecurityValidationError as exc:
-            return CollectionResult(False, url, None, 0, None, None, None, {}, extraction_status="SECURITY_BLOCKED", error="Target URL rejected by security policy.")
-
         request_headers = self.DEFAULT_HEADERS.copy()
 
         if headers:
@@ -154,25 +149,7 @@ class CollectionService:
                             location = response.headers.get("location")
                             if not location:
                                 break
-                            try:
-                                current_url = UrlSecurityService.validate_url(
-                                    urljoin(current_url, location)
-                                )
-                            except SecurityValidationError as exc:
-                                return CollectionResult(
-                                    success=False,
-                                    url=current_url,
-                                    status_code=response.status_code,
-                                    response_time_ms=int(
-                                        (time.perf_counter() - start_time) * 1000
-                                    ),
-                                    price=None,
-                                    currency=None,
-                                    availability=None,
-                                    attributes={"redirect_blocked": True},
-                                    extraction_status="SECURITY_BLOCKED",
-                                    error="Redirect target rejected by security policy.",
-                                )
+                            current_url = urljoin(current_url, location)
 
                         if response is None:
                             raise httpx.HTTPError("No HTTP response received")
