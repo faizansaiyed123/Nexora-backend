@@ -11,10 +11,11 @@ import uuid
 
 import httpx
 from fastapi import HTTPException, status
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.collectors.browser import render_page
+from backend.models.client import ClientModel
 from backend.models.competitor import CompetitorModel, SourceModel
 from backend.models.enums import CompetitorStatusEnum, CreatedViaEnum, JobStatusEnum, JobTypeEnum, OfferingTypeEnum, SourceTypeEnum
 from backend.models.observation import JobModel
@@ -39,8 +40,8 @@ class WebsiteDiscoveryService:
     async def _get_or_create_client_source(cls, db: AsyncSession, client_id: uuid.UUID, target_url: str) -> SourceModel:
         domain = urlparse(target_url).netloc.lower() or "client-website"
         client = await db.scalar(
-            select(__import__("backend.models.client", fromlist=["ClientModel"]).ClientModel)
-            .where(__import__("backend.models.client", fromlist=["ClientModel"]).ClientModel.id == client_id)
+            select(ClientModel)
+            .where(ClientModel.id == client_id)
             .with_for_update()
         )
         if client is None:
@@ -55,7 +56,7 @@ class WebsiteDiscoveryService:
         ).scalar_one_or_none()
         if competitor is None:
             current_count = await db.scalar(
-                select(__import__("sqlalchemy", fromlist=["func"]).func.count(CompetitorModel.id))
+                select(func.count(CompetitorModel.id))
                 .where(CompetitorModel.client_id == client_id)
             ) or 0
             if current_count >= client.max_competitors:
