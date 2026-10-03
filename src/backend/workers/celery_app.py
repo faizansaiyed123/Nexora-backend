@@ -23,7 +23,7 @@ celery_app.conf.update(
         "nexora-refresh-monitored-matches": {
             "task": "backend.workers.tasks.enqueue_monitored_match_jobs",
             "schedule": settings.scheduled_collection_interval_minutes * 60,
-        },,
+        },
         "nexora-dispatch-notification-outbox": {
             "task": "backend.workers.tasks.dispatch_pending_notifications",
             "schedule": 30,
