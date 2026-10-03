@@ -1,0 +1,23 @@
+name: Temporary uv lock verification
+
+on:
+  push:
+    branches:
+      - hardening/remaining-issues-20261003
+
+jobs:
+  uv-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Regenerate lockfile without committing
+        run: |
+          uv lock
+          echo "=== uv.lock diff stat ==="
+          git diff --stat -- uv.lock
+          echo "=== uv.lock diff ==="
+          git diff -- uv.lock
