@@ -20,7 +20,7 @@ class NotificationOutboxModel(Base):
     recipient: Mapped[str] = mapped_column(String(320), nullable=False)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
-    dedup_key: Mapped[str] = mapped_column(String(500), nullable=False, unique=True)
+    dedup_key: Mapped[str] = mapped_column(String(500), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING", index=True)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
