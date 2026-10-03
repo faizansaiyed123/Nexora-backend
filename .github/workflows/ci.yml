@@ -48,5 +48,5 @@ jobs:
       - run: python -m pip install --upgrade pip
       - run: pip install "uv==0.10.0"
       - run: uv sync --frozen --python 3.12
-      - run: uv run alembic upgrade head
-      - run: uv run pytest -q
+      - run: uv run --python 3.12 alembic upgrade head
+      - run: uv run --python 3.12 pytest -q
