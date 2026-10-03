@@ -619,6 +619,91 @@ async def test_snapshot_transition_is_serialized():
 
 
 @pytest.mark.asyncio
+async def test_discovery_history_restores_persisted_items():
+    graph = await _tenant_graph()
+    item = {
+        "id": str(graph["offering_id"]),
+        "name": "Restored Offering",
+        "sku": "RESTORED-1",
+        "price": "19.99",
+        "currency": "USD",
+        "url": "https://example.com/restored",
+        "category": "Test",
+        "image_url": None,
+        "attributes": {"source": "history"},
+        "action": "CREATED",
+    }
+    async with AsyncSessionLocal() as session:
+        job = JobModel(
+            source_id=graph["source_id"],
+            job_type="SCHEMA_DISCOVERY",
+            status=JobStatusEnum.COMPLETED,
+            total_items_processed=1,
+            successful_items=1,
+            failed_items=0,
+            started_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+            completed_at=datetime.now(timezone.utc),
+            meta_info={
+                "client_id": str(graph["client_id"]),
+                "target_url": "https://example.com",
+                "pages_crawled": 1,
+                "created_count": 1,
+                "updated_count": 0,
+                "items": [item],
+            },
+        )
+        session.add(job)
+        await session.commit()
+        job_id = job.id
+
+    async with AsyncSessionLocal() as session:
+        response = await WebsiteDiscoveryService.get_discovery_job(
+            db=session,
+            job_id=job_id,
+            client_id=graph["client_id"],
+        )
+
+    assert len(response.items) == 1
+    assert response.items[0].name == "Restored Offering"
+    assert response.items[0].sku == "RESTORED-1"
+    assert response.items[0].action == "CREATED"
+
+
+@pytest.mark.asyncio
+async def test_scheduler_reaps_legacy_running_job_without_lease():
+    graph = await _tenant_graph()
+    async with AsyncSessionLocal() as session:
+        job = JobModel(
+            source_id=graph["source_id"],
+            job_type="SCHEDULED_CRAWL",
+            status=JobStatusEnum.RUNNING,
+            started_at=datetime.now(timezone.utc) - timedelta(seconds=7200),
+            lease_expires_at=None,
+            meta_info={"offering_match_id": str(graph["match_id"])},
+        )
+        session.add(job)
+        await session.commit()
+        job_id = job.id
+
+    job_ids = await _enqueue_monitored_match_jobs()
+    assert len(job_ids) == 1
+
+    async with AsyncSessionLocal() as session:
+        old_job = await session.scalar(
+            select(JobModel).where(JobModel.id == job_id)
+        )
+        new_job = await session.scalar(
+            select(JobModel).where(JobModel.id == job_ids[0])
+        )
+
+    assert old_job is not None
+    assert old_job.status == JobStatusEnum.FAILED
+    assert old_job.lease_expires_at is None
+    assert new_job is not None
+    assert new_job.status == JobStatusEnum.PENDING
+
+
+@pytest.mark.asyncio
 async def test_rate_limit_is_atomic_under_concurrency(redis_client=None):
     identifier = f"remediation-{uuid4()}"
     results = await asyncio.gather(
