@@ -45,3 +45,16 @@ jobs:
         env:
           DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/nexora
           REDIS_URL: redis://localhost:6379/0
+
+      - name: Validate production Compose
+        env:
+          POSTGRES_PASSWORD: ci-postgres-password
+          REDIS_PASSWORD: ci-redis-password
+          JWT_SECRET_KEY: test-only-nexora-ci-secret-32-characters-minimum
+          CORS_ORIGINS: '["https://app.example.test"]'
+          ALLOWED_HOSTS: '["api.example.test"]'
+          FRONTEND_URL: https://app.example.test
+        run: docker compose -f docker-compose.prod.yml config
+
+      - name: Build backend production image
+        run: docker build --pull -t nexora-backend:ci .
