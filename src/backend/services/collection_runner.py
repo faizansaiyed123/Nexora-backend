@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+import logging
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.collectors.browser import render_page
+from backend.core.config import get_settings
 from backend.core.rate_limit import DistributedRateLimiter
 from backend.models.competitor import OfferingMatchModel, SourceModel
 from backend.models.enums import AvailabilityStatusEnum, ErrorCategoryEnum, JobStatusEnum
@@ -19,6 +21,8 @@ from backend.services.alert_service import AlertService
 from backend.services.collection_service import CollectionService
 from backend.services.source_service import SourceService
 
+logger = logging.getLogger("nexora.collection_runner")
+
 
 class CollectionRunner:
     """Shared persistence path for scheduled/background collection jobs."""
@@ -26,17 +30,60 @@ class CollectionRunner:
     def __init__(self) -> None:
         self.collector = CollectionService()
 
+    @staticmethod
+    async def _claim_job(session: AsyncSession, job_id: UUID) -> Optional[JobModel]:
+        settings = get_settings()
+        now = datetime.now(timezone.utc)
+        lease_expires_at = now + timedelta(minutes=settings.collection_job_lease_minutes)
+
+        stmt = (
+            update(JobModel)
+            .where(
+                JobModel.id == job_id,
+                JobModel.status == JobStatusEnum.PENDING,
+            )
+            .values(
+                status=JobStatusEnum.RUNNING,
+                started_at=now,
+                completed_at=None,
+                lease_expires_at=lease_expires_at,
+                attempt_count=JobModel.attempt_count + 1,
+            )
+            .returning(JobModel.id)
+        )
+        claimed_id = await session.scalar(stmt)
+        if claimed_id is None:
+            return None
+
+        return await session.scalar(select(JobModel).where(JobModel.id == claimed_id))
+
+    @staticmethod
+    async def _lock_match(session: AsyncSession, match_id: UUID) -> OfferingMatchModel:
+        match = await session.scalar(
+            select(OfferingMatchModel)
+            .options(
+                selectinload(OfferingMatchModel.offering),
+                selectinload(OfferingMatchModel.source).selectinload(SourceModel.competitor),
+            )
+            .where(
+                OfferingMatchModel.id == match_id,
+                OfferingMatchModel.is_active.is_(True),
+            )
+            .with_for_update()
+        )
+        if match is None:
+            raise ValueError("Offering match not found.")
+        return match
+
     async def run(self, session: AsyncSession, job_id: UUID) -> JobModel:
-        job = await session.scalar(select(JobModel).where(JobModel.id == job_id))
+        job = await self._claim_job(session, job_id)
         if job is None:
-            raise ValueError("Collection job not found.")
-        if job.status not in {JobStatusEnum.PENDING, JobStatusEnum.RUNNING}:
-            return job
+            existing = await session.scalar(select(JobModel).where(JobModel.id == job_id))
+            if existing is None:
+                raise ValueError("Collection job not found.")
+            return existing
 
-        job.status = JobStatusEnum.RUNNING
-        job.started_at = datetime.now(timezone.utc)
         await session.commit()
-
         try:
             match_id = (job.meta_info or {}).get("offering_match_id")
             if not match_id:
@@ -47,6 +94,7 @@ class CollectionRunner:
                 .options(
                     selectinload(OfferingMatchModel.offering),
                     selectinload(OfferingMatchModel.source).selectinload(SourceModel.competitor),
+                    selectinload(OfferingMatchModel.source).selectinload(SourceModel.configuration),
                 )
                 .where(
                     OfferingMatchModel.id == UUID(str(match_id)),
@@ -67,6 +115,7 @@ class CollectionRunner:
                 job.error_category = ErrorCategoryEnum.CIRCUIT_BREAKER_OPEN
                 job.error_message = "Collection source is inactive or its circuit breaker is open."
                 job.completed_at = datetime.now(timezone.utc)
+                job.lease_expires_at = None
                 await session.commit()
                 return job
 
@@ -105,7 +154,7 @@ class CollectionRunner:
                         response_time_ms=result.response_time_ms,
                         status_code=result.status_code or 200,
                         custom_selectors=selectors,
-                )
+                    )
 
             availability = self._availability(result.availability)
             observation = ObservationModel(
@@ -120,13 +169,19 @@ class CollectionRunner:
                 observed_at=datetime.now(timezone.utc),
             )
             session.add(observation)
-
             job.total_items_processed = 1
 
+            # Lock the match row before reading/updating its single snapshot. This
+            # also serializes the "no snapshot exists yet" case against the unique FK.
+            await session.execute(
+                select(OfferingMatchModel.id)
+                .where(OfferingMatchModel.id == match.id)
+                .with_for_update()
+            )
             previous_snapshot = await session.scalar(
-                select(SnapshotModel).where(
-                    SnapshotModel.offering_match_id == match.id
-                )
+                select(SnapshotModel)
+                .where(SnapshotModel.offering_match_id == match.id)
+                .with_for_update()
             )
             previous_price = previous_snapshot.current_price if previous_snapshot else None
             previous_availability = previous_snapshot.current_availability if previous_snapshot else None
@@ -139,10 +194,9 @@ class CollectionRunner:
                 job.successful_items = 0
                 job.failed_items = 1
                 job.error_category = self._error_category(result.error)
-                job.error_message = result.error or "Collection failed."
+                job.error_message = "Collection request failed."
                 job.completed_at = datetime.now(timezone.utc)
-                await session.commit()
-
+                job.lease_expires_at = None
                 if circuit_tripped:
                     await AlertService.evaluate_and_trigger(
                         session,
@@ -160,32 +214,31 @@ class CollectionRunner:
                         percentage_difference=None,
                         circuit_tripped=True,
                     )
-                    await session.commit()
+                await session.commit()
                 return job
 
             SourceService.record_collection_success(source)
             current_price = result.price
             price_difference: Optional[Decimal] = None
             percentage_difference: Optional[float] = None
-
             if previous_price is not None and current_price is not None:
                 price_difference = current_price - previous_price
                 if previous_price != 0:
                     percentage_difference = float((price_difference / previous_price) * 100)
 
             if previous_snapshot is None:
-                snapshot = SnapshotModel(
-                    offering_match_id=match.id,
-                    current_price=current_price,
-                    previous_price=None,
-                    price_difference=None,
-                    percentage_difference=None,
-                    current_availability=availability,
-                    last_observed_at=observation.observed_at,
+                session.add(
+                    SnapshotModel(
+                        offering_match_id=match.id,
+                        current_price=current_price,
+                        previous_price=None,
+                        price_difference=None,
+                        percentage_difference=None,
+                        current_availability=availability,
+                        last_observed_at=observation.observed_at,
+                    )
                 )
-                session.add(snapshot)
             else:
-                previous_snapshot.previous_price = previous_snapshot.current_price
                 previous_snapshot.previous_price = previous_snapshot.current_price
                 if current_price is not None:
                     previous_snapshot.current_price = current_price
@@ -198,7 +251,6 @@ class CollectionRunner:
                 previous_snapshot.last_observed_at = observation.observed_at
 
             await session.flush()
-
             await AlertService.evaluate_and_trigger(
                 session,
                 client_id=offering.client_id,
@@ -222,22 +274,26 @@ class CollectionRunner:
             job.error_category = None
             job.error_message = None
             job.completed_at = datetime.now(timezone.utc)
+            job.lease_expires_at = None
             await session.commit()
             await session.refresh(job)
             return job
 
         except Exception as exc:
+            logger.exception("Collection job %s failed", job_id)
             await session.rollback()
             job = await session.scalar(select(JobModel).where(JobModel.id == job_id))
             if job is None:
                 raise
+            # Do not return implementation/library exception details to tenants.
             job.status = JobStatusEnum.FAILED
-            job.total_items_processed = 1
+            job.total_items_processed = max(job.total_items_processed, 1)
             job.successful_items = 0
             job.failed_items = 1
             job.error_category = self._error_category(str(exc))
-            job.error_message = str(exc)
+            job.error_message = "Collection job failed."
             job.completed_at = datetime.now(timezone.utc)
+            job.lease_expires_at = None
             await session.commit()
             await session.refresh(job)
             return job
