@@ -26,6 +26,7 @@ class AlertRuleCreate(AlertRuleBase):
 
 
 class AlertRuleUpdate(BaseModel):
+    offering_id: Optional[uuid.UUID] = None
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     alert_type: Optional[AlertTypeEnum] = None
     threshold_value: Optional[float] = None
