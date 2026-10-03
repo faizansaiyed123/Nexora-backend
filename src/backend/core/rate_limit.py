@@ -1,5 +1,8 @@
 """
-Distributed Redis-backed sliding-window rate limiting and abuse prevention.
+Redis-backed fixed-window rate limiting and atomic one-time-token/session consumption.
+
+Rate limiting uses an INCR + TTL fixed window and intentionally fails open when
+Redis is unavailable, preserving the existing runtime behavior.
 """
 
 import logging
@@ -88,9 +91,12 @@ class TokenSessionStore:
         try:
             import json
             key = f"email_verify:{token_hash}"
-            raw = await redis.get(key)
+            raw = await redis.eval(
+                "local value = redis.call('GET', KEYS[1]); if value then redis.call('DEL', KEYS[1]); end; return value",
+                1,
+                key,
+            )
             if raw:
-                await redis.delete(key)
                 return json.loads(raw)
         except Exception as e:
             logger.error(f"Failed to consume email verification token: {e}")
@@ -116,9 +122,12 @@ class TokenSessionStore:
             try:
                 import json
                 key = f"pwd_reset:{token_hash}"
-                raw = await redis.get(key)
+                raw = await redis.eval(
+                    "local value = redis.call('GET', KEYS[1]); if value then redis.call('DEL', KEYS[1]); end; return value",
+                    1,
+                    key,
+                )
                 if raw:
-                    await redis.delete(key)
                     return json.loads(raw)
             except Exception as e:
                 logger.error(f"Failed to consume password reset token: {e}")
@@ -156,17 +165,30 @@ class TokenSessionStore:
 
         try:
             key = f"refresh:{user_id}:{session_id}"
-            stored_hash = await redis.get(key)
-            if not stored_hash:
-                return False
-
-            if stored_hash != provided_token_hash:
+            result = await redis.eval(
+                """
+                local current = redis.call('GET', KEYS[1])
+                if not current then
+                    return 0
+                end
+                if current ~= ARGV[1] then
+                    redis.call('DEL', KEYS[1])
+                    return -1
+                end
+                redis.call('SETEX', KEYS[1], ARGV[2], ARGV[3])
+                return 1
+                """,
+                1,
+                key,
+                provided_token_hash,
+                ttl_seconds,
+                new_token_hash,
+            )
+            if result == 1:
+                return True
+            if result == -1:
                 logger.warning(f"Refresh token reuse detected for user {user_id}! Revoking session {session_id}.")
-                await redis.delete(key)
-                return False
-
-            await redis.setex(key, ttl_seconds, new_token_hash)
-            return True
+            return False
         except Exception as e:
             logger.error(f"Failed to rotate refresh session: {e}")
             return False
