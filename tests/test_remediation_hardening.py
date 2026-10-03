@@ -65,7 +65,7 @@ async def test_ssrf_validation_result_is_the_address_actually_used(monkeypatch):
 @pytest.mark.asyncio
 async def test_rate_limit_counter_and_expiry_are_one_atomic_redis_operation():
     fake_redis = AsyncMock()
-    fake_redis.eval = AsyncMock(return_value=2)
+    fake_redis.eval = AsyncMock(side_effect=[1, 2])
     with patch("backend.core.rate_limit.get_redis_client", new=AsyncMock(return_value=fake_redis)),          patch("backend.core.rate_limit.settings.rate_limit_enabled", True):
         await DistributedRateLimiter.check_rate_limit("test", "atomic", 2, 60)
         with pytest.raises(RateLimitException):
@@ -258,7 +258,7 @@ async def test_scheduler_is_idempotent_under_concurrent_runs():
 
 
 @pytest.mark.asyncio
-async def test_stale_running_job_is_requeued():
+async def test_stale_running_job_is_recovered_without_reclaiming_it():
     async with AsyncSessionLocal() as setup:
         client = ClientModel(id=uuid.uuid4(), name="Stale Tenant", slug=f"stale-{uuid.uuid4().hex[:8]}", status=ClientStatusEnum.ACTIVE)
         competitor = CompetitorModel(id=uuid.uuid4(), client_id=client.id, name="Rival", domain="stale-rival.example")
@@ -271,8 +271,9 @@ async def test_stale_running_job_is_requeued():
         await session.commit()
         refreshed = await session.get(JobModel, job.id)
     assert changed == 1
-    assert refreshed.status == JobStatusEnum.PENDING
+    assert refreshed.status == JobStatusEnum.FAILED
     assert refreshed.lease_expires_at is None
+    assert refreshed.error_message == "Collection worker lease expired."
 
 
 @pytest.mark.asyncio
