@@ -11,6 +11,7 @@ from backend.core.rate_limit import TokenSessionStore
 from backend.models.competitor import SourceModel
 from backend.models.enums import CircuitStateEnum, HealthStatusEnum, AvailabilityStatusEnum, AlertTypeEnum
 from backend.services.alert_service import AlertService
+from backend.services.url_security import SecurityValidationError
 from backend.services.collection_service import CollectionService
 from backend.services.source_service import SourceService
 
