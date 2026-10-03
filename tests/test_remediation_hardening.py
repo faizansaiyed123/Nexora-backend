@@ -525,6 +525,7 @@ async def test_alert_notifications_are_transactional_outbox_records():
             title=log.title,
             message=log.message,
         )
+        assert any(isinstance(item, NotificationOutboxModel) for item in setup.new)
         await setup.flush()
 
         outbox_count = await setup.scalar(
