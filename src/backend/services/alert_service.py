@@ -172,6 +172,7 @@ class AlertService:
                     AlertRuleModel.offering_id == offering_id,
                 ),
             )
+            .with_for_update()
         )
         rules = list(result.scalars().all())
         now = datetime.now(timezone.utc)
