@@ -120,7 +120,7 @@ async def get_current_tenant_id(
 def require_role(allowed_roles: List[RoleEnum]) -> Callable:
     async def role_checker(
         auth_ctx: Annotated[AuthenticatedUserContext, Depends(get_current_user_claims)],
-        _: Annotated[UserModel, Depends(get_current_authorized_user)],
+        _: Annotated[AuthenticatedUserContext, Depends(get_current_authorized_user)],
     ) -> AuthenticatedUserContext:
         if auth_ctx.role not in allowed_roles and auth_ctx.role != RoleEnum.SUPER_ADMIN:
             raise ForbiddenException(
