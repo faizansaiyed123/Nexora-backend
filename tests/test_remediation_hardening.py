@@ -30,6 +30,7 @@ from backend.services.browser_proxy import SafeBrowserProxy
 from backend.services.collection_service import CollectionResult, CollectionService
 from backend.services.collection_runner import CollectionRunner
 from backend.services.competitor_service import CompetitorService
+from backend.services.discovery_service import WebsiteDiscoveryService
 from backend.services.offering_service import OfferingService
 from backend.services.pinned_http import PinnedDNSBackend
 from backend.services.url_security import SecurityValidationError, UrlSecurityService
@@ -364,6 +365,19 @@ async def test_alert_outbox_rolls_back_with_transaction():
                 AlertRuleModel.client_id == graph["client_id"]
             )
         ) == 1
+
+
+@pytest.mark.asyncio
+async def test_discovery_cannot_bypass_competitor_quota():
+    graph = await _tenant_graph(max_competitors=1)
+    async with AsyncSessionLocal() as session:
+        with pytest.raises(ForbiddenException):
+            await WebsiteDiscoveryService._get_or_create_client_source(
+                session,
+                graph["client_id"],
+                "https://another-domain.example/catalog",
+            )
+        await session.rollback()
 
 
 @pytest.mark.asyncio
