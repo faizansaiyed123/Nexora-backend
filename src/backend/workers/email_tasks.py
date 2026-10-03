@@ -171,3 +171,19 @@ Regards,
         body=body,
         message_id=message_id,
     )
+
+
+async def send_outbox_email_async(
+    email: str,
+    subject: str,
+    body: str,
+    *,
+    message_id: str | None = None,
+) -> None:
+    """Deliver an already-rendered outbox email without wrapping or changing its body."""
+    await _send_email(
+        to_email=email,
+        subject=subject,
+        body=body,
+        message_id=message_id,
+    )
