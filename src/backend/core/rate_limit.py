@@ -1,8 +1,7 @@
 """
 Redis-backed fixed-window rate limiting and atomic one-time-token/session consumption.
 
-Rate limiting uses an INCR + TTL fixed window and intentionally fails open when
-Redis is unavailable, preserving the existing runtime behavior.
+Rate limiting uses an atomic Redis fixed window and a process-local fallback when Redis is unavailable. The fallback preserves abuse protection but is not globally distributed.
 """
 
 import logging
