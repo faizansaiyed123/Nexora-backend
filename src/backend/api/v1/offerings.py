@@ -28,6 +28,7 @@ from backend.core.deps import (
 )
 from backend.db.session import get_db
 from backend.models.enums import OfferingTypeEnum
+from backend.schemas.observation import ObservationHistoryResponse
 from backend.schemas.offering import (
     BulkOfferingArchiveRequest,
     BulkOfferingArchiveResponse,
@@ -345,7 +346,7 @@ async def list_offerings(
 
 @router.get(
     "/{offering_id}/history",
-    response_model=object,
+    response_model=ObservationHistoryResponse,
     summary="Get Offering Observation History",
     dependencies=[Depends(require_analyst)],
 )
