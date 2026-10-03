@@ -5,11 +5,12 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from celery import shared_task
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import selectinload
 
 from backend.db.session import AsyncSessionLocal
+from backend.core.config import get_settings
 from backend.models.competitor import OfferingMatchModel, SourceModel
 from backend.models.offering import OfferingModel
 from backend.models.observation import JobModel
@@ -17,6 +18,8 @@ from backend.models.notification import NotificationOutboxModel
 from backend.models.enums import JobStatusEnum, JobTypeEnum
 from backend.services.collection_runner import CollectionRunner
 from backend.workers.email_tasks import send_competitive_alert_email_async
+
+settings = get_settings()
 
 
 async def _enqueue_monitored_match_jobs() -> list[str]:
@@ -45,8 +48,20 @@ async def _enqueue_monitored_match_jobs() -> list[str]:
             .where(
                 JobModel.job_type == JobTypeEnum.SCHEDULED_CRAWL,
                 JobModel.status == JobStatusEnum.RUNNING,
-                JobModel.lease_expires_at.is_not(None),
-                JobModel.lease_expires_at < now,
+                or_(
+                    (
+                        JobModel.lease_expires_at.is_not(None)
+                        & (JobModel.lease_expires_at < now)
+                    ),
+                    (
+                        JobModel.lease_expires_at.is_(None)
+                        & JobModel.started_at.is_not(None)
+                        & (
+                            JobModel.started_at
+                            < now - timedelta(seconds=settings.job_lease_seconds)
+                        )
+                    ),
+                ),
             )
             .values(
                 status=JobStatusEnum.FAILED,
