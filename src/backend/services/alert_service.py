@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -10,10 +11,9 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.exceptions import NotFoundException
-from backend.models.alert import AlertLogModel, AlertRuleModel
+from backend.models.alert import AlertLogModel, AlertRuleModel, NotificationOutboxModel
 from backend.models.client import UserModel
 from backend.models.enums import AlertTypeEnum, AvailabilityStatusEnum
-from backend.workers.email_tasks import send_competitive_alert_email_async
 
 logger = logging.getLogger(__name__)
 
@@ -168,7 +168,19 @@ class AlertService:
         now = datetime.now(timezone.utc)
         triggered = 0
 
-        for rule in rules:
+        for candidate_rule in rules:
+            rule = await db.scalar(
+                select(AlertRuleModel)
+                .where(
+                    AlertRuleModel.id == candidate_rule.id,
+                    AlertRuleModel.client_id == client_id,
+                    AlertRuleModel.is_active.is_(True),
+                )
+                .with_for_update()
+            )
+            if rule is None:
+                continue
+
             if rule.last_triggered_at is not None:
                 elapsed = (now - rule.last_triggered_at).total_seconds() / 60
                 if elapsed < rule.cooldown_minutes:
@@ -209,8 +221,9 @@ class AlertService:
             await db.flush()
             triggered += 1
 
-            await cls._notify_channels(
+            await cls._enqueue_notifications(
                 db,
+                alert_log=log,
                 client_id=client_id,
                 channels=rule.target_channels or {},
                 title=title,
@@ -304,20 +317,22 @@ class AlertService:
         return None
 
     @staticmethod
-    async def _notify_channels(
+    async def _enqueue_notifications(
         db: AsyncSession,
         *,
+        alert_log: AlertLogModel,
         client_id: uuid.UUID,
         channels: dict[str, Any],
         title: str,
         message: str,
     ) -> None:
+        """Queue notifications transactionally; delivery happens after commit."""
         email_setting = channels.get("email")
         if not email_setting:
             return
 
         if isinstance(email_setting, list):
-            recipients = [str(x) for x in email_setting if x]
+            recipients = [str(x).strip().lower() for x in email_setting if str(x).strip()]
         else:
             result = await db.execute(
                 select(UserModel.email).where(
@@ -326,10 +341,30 @@ class AlertService:
                     UserModel.email_verified.is_(True),
                 )
             )
-            recipients = [str(x) for x in result.scalars().all()]
+            recipients = [str(x).strip().lower() for x in result.scalars().all()]
 
-        for email in recipients:
-            try:
-                await send_competitive_alert_email_async(email, title, message)
-            except Exception:
-                logger.warning("Competitive alert email failed for %s", email, exc_info=True)
+        for email in dict.fromkeys(recipients):
+            dedupe_key = hashlib.sha256(
+                f"{alert_log.id}:EMAIL:{email}".encode("utf-8")
+            ).hexdigest()
+            db.add(
+                NotificationOutboxModel(
+                    alert_log_id=alert_log.id,
+                    recipient=email,
+                    channel="EMAIL",
+                    subject=f"Nexora Competitive Alert: {title}",
+                    body=(
+                        "Hello,\n\n"
+                        "Nexora detected a competitive intelligence event:\n\n"
+                        f"{title}\n\n"
+                        f"{message}\n\n"
+                        "Open your Nexora workspace to review the latest observation "
+                        "and decide whether action is needed.\n\n"
+                        "Regards,\nNexora"
+                    ),
+                    status="PENDING",
+                    attempt_count=0,
+                    next_attempt_at=datetime.now(timezone.utc),
+                    dedupe_key=dedupe_key,
+                )
+            )
