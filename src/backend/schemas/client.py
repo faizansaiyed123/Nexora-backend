@@ -280,6 +280,16 @@ class MessageResponse(BaseModel):
     )
 
 
+class RegisterResponse(MessageResponse):
+    email_verification_required: bool = Field(
+        ...,
+        description=(
+            "False when email verification is disabled for this environment, "
+            "in which case the new admin can sign in immediately."
+        ),
+    )
+
+
 class TokenResponse(BaseModel):
     access_token: str = Field(
         ...,

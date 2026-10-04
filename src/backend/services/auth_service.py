@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.core.email_validator import validate_and_normalize_email, validate_password_strength
+from backend.core.config import get_settings
 from backend.core.exceptions import (
     AuthenticationException,
     ConflictException,
@@ -96,6 +97,8 @@ class AuthService:
 
         hashed_password = get_password_hash(data.password)
 
+        skip_email_verification = get_settings().email_verification_bypass
+
         user = UserModel(
             client_id=client.id,
             email=clean_email,
@@ -103,7 +106,7 @@ class AuthService:
             hashed_password=hashed_password,
             role=RoleEnum.ORG_ADMIN,
             is_active=True,
-            email_verified=False,
+            email_verified=skip_email_verification,
         )
         session.add(user)
         await session.flush()
@@ -119,8 +122,12 @@ class AuthService:
                 "organization_name": client.name,
                 "email": user.email,
                 "role": user.role.value,
+                "email_verification_bypassed": skip_email_verification,
             },
         )
+
+        if skip_email_verification:
+            return user
 
         verify_token = generate_secure_token(32)
 
@@ -130,11 +137,28 @@ class AuthService:
             email=clean_email,
         )
 
-        await send_verification_email_async(
-            clean_email,
-            verify_token,
-            user.full_name,
-        )
+        try:
+            await send_verification_email_async(
+                clean_email,
+                verify_token,
+                user.full_name,
+            )
+        except Exception:
+            # A mail outage must not turn a successful signup into a 500: the
+            # tenant and admin are already persisted. Record the failure so the
+            # operator can see why the verification link never arrived.
+            logger.exception(
+                "Verification email could not be delivered for user %s", user.id
+            )
+            await AuditService.log_security_event(
+                session=session,
+                action="VERIFICATION_EMAIL_FAILED",
+                client_id=client.id,
+                user_id=user.id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                changes={"email": clean_email},
+            )
 
         return user
 

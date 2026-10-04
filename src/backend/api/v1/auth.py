@@ -21,6 +21,7 @@ from backend.schemas.client import (
     MessageResponse,
     RefreshTokenRequest,
     RegisterRequest,
+    RegisterResponse,
     ResendVerificationRequest,
     ResetPasswordRequest,
     TokenResponse,
@@ -31,7 +32,7 @@ from backend.services.auth_service import AuthService
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
-@router.post("/register", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     request: Request,
     data: RegisterRequest,
@@ -51,8 +52,15 @@ async def register(
     )
     await db.commit()
 
-    return MessageResponse(
-        message="Registration successful. Email verification required. Please check your inbox to verify your account."
+    verification_required = not bool(user.email_verified)
+
+    return RegisterResponse(
+        message=(
+            "Registration successful. Email verification required. Please check your inbox to verify your account."
+            if verification_required
+            else "Registration successful. Email verification is disabled for this environment, so you can sign in immediately."
+        ),
+        email_verification_required=verification_required,
     )
 
 @router.post("/resend-verification", response_model=MessageResponse)

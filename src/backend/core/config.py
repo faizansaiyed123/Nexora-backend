@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     smtp_from_name: str = "Nexora"
     frontend_url: str = "http://localhost:5173"
 
+    # Local/staging escape hatch for environments without a working SMTP relay.
+    # When true, registration marks the new admin as already verified, does not
+    # mint a verification token, and does not attempt to send mail. Never enable
+    # this in production: it removes proof of email ownership from signup.
+    email_verification_bypass: bool = False
+
     # Gemini discovery fallback. Discovery continues with deterministic extraction
     # when this key is not configured.
     gemini_api_key: str = ""
@@ -79,7 +85,17 @@ class Settings(BaseSettings):
             )
         if self.environment.lower() in {"prod", "production"} and "*" in self.allowed_hosts:
             raise ValueError("ALLOWED_HOSTS must be explicit in production.")
+        if self.email_verification_bypass and self.environment.lower() in {"prod", "production"}:
+            raise ValueError(
+                "EMAIL_VERIFICATION_BYPASS must be disabled in production. "
+                "Signup would accept unverified email addresses."
+            )
         return self
+
+    @property
+    def smtp_configured(self) -> bool:
+        """True only when both SMTP username and password are present."""
+        return bool(self.smtp_username.strip() and self.smtp_password.strip())
 
     model_config = SettingsConfigDict(
         env_file=".env",
