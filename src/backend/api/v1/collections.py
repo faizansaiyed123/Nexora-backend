@@ -76,6 +76,16 @@ async def run_collection(
             ).selectinload(
                 SourceModel.competitor
             ),
+            # source.configuration is read further down while the collection
+            # runs. Without an explicit selectinload that lazy load fires from
+            # async context and raises MissingGreenlet, which the catch-all at
+            # the bottom of this handler converts into a 502 for every source
+            # that has a configuration row.
+            selectinload(
+                OfferingMatchModel.source
+            ).selectinload(
+                SourceModel.configuration
+            ),
         )
         .where(
             OfferingMatchModel.id == offering_match_id,
