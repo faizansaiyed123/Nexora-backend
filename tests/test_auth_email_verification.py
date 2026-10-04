@@ -10,13 +10,16 @@ from backend.core.exceptions import AuthenticationException, ValidationException
 
 @pytest.fixture(autouse=True)
 def disable_rate_limiting():
-    with patch("backend.core.config.get_settings") as mock_settings:
-        from backend.core.config import Settings
-        s = Settings(
-            rate_limit_enabled=False,
-            block_disposable_emails=True,
-        )
-        mock_settings.return_value = s
+    from backend.core.config import Settings
+    s = Settings(
+        rate_limit_enabled=False,
+        block_disposable_emails=True,
+        email_verification_bypass=False,
+    )
+    # auth_service imports get_settings by name, so patching only
+    # backend.core.config.get_settings would not reach it.
+    with patch("backend.core.config.get_settings", return_value=s), \
+         patch("backend.services.auth_service.get_settings", return_value=s):
         yield
 
 
@@ -129,3 +132,60 @@ async def test_email_verification_flow():
             assert len(access_token) > 20
             assert refresh_token is not None
             assert expires_in > 0
+
+
+@pytest.mark.asyncio
+async def test_email_verification_bypass_skips_token_and_allows_login():
+    unique_suffix = uuid.uuid4().hex[:8]
+    real_email = f"bypass_{unique_suffix}@nexora-corp.com"
+    password = "SecurePassword123!"
+
+    from backend.core.config import Settings
+    bypassed = Settings(
+        rate_limit_enabled=False,
+        block_disposable_emails=True,
+        email_verification_bypass=True,
+    )
+
+    with patch("backend.core.config.get_settings", return_value=bypassed), \
+         patch("backend.services.auth_service.get_settings", return_value=bypassed), \
+         patch("backend.services.auth_service.send_verification_email_async") as mock_send, \
+         patch("backend.services.auth_service.TokenSessionStore.store_email_verification_token") as mock_store:
+
+        async with AsyncSessionLocal() as session:
+            user = await AuthService.register_tenant(
+                session=session,
+                data=RegisterRequest(
+                    organization_name=f"Bypass Tenant {unique_suffix}",
+                    full_name="Bypass Admin",
+                    email=real_email,
+                    password=password,
+                )
+            )
+            await session.commit()
+            assert user.email_verified is True
+
+        mock_send.assert_not_called()
+        mock_store.assert_not_called()
+
+        async with AsyncSessionLocal() as session:
+            authed_user, access_token, _, _ = await AuthService.authenticate_user(
+                session=session,
+                data=LoginRequest(
+                    email=real_email,
+                    password=password,
+                )
+            )
+            assert authed_user.email_verified is True
+            assert access_token is not None
+
+
+def test_email_verification_bypass_rejected_in_production():
+    from backend.core.config import Settings
+
+    with pytest.raises(ValueError, match="EMAIL_VERIFICATION_BYPASS"):
+        Settings(
+            environment="production",
+            allowed_hosts=["api.nexora.example"],
+            email_verification_bypass=True,
+        )
