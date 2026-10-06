@@ -190,11 +190,26 @@ class AuthService:
             user_id=user.id,
             changes={"email": clean_email},
         )
-        await send_verification_email_async(
-            clean_email,
-            resend_token,
-            user.full_name,
-        )
+        try:
+            await send_verification_email_async(
+                clean_email,
+                resend_token,
+                user.full_name,
+            )
+        except Exception:
+            # A mail outage must not turn a resend into a 500. The token is
+            # already stored, so the user can still verify once SMTP is up.
+            logger.exception(
+                "Verification email could not be delivered for user %s",
+                user.id,
+            )
+            await AuditService.log_security_event(
+                session=session,
+                action="VERIFICATION_EMAIL_FAILED",
+                client_id=user.client_id,
+                user_id=user.id,
+                changes={"email": clean_email},
+            )
 
     @classmethod
     async def verify_email(
@@ -431,10 +446,29 @@ class AuthService:
                 user_agent=user_agent,
             )
 
-            await send_password_reset_email_async(
-                clean_email,
-                reset_token,
-            )
+            try:
+                await send_password_reset_email_async(
+                    clean_email,
+                    reset_token,
+                )
+            except Exception:
+                # Email delivery failure must not turn a valid reset request
+                # into a 500, and must not reveal whether the account exists.
+                # The token is already stored, so the reset link remains
+                # usable if the operator later configures SMTP.
+                logger.exception(
+                    "Password reset email could not be delivered for user %s",
+                    user.id,
+                )
+                await AuditService.log_security_event(
+                    session=session,
+                    action="PASSWORD_RESET_EMAIL_FAILED",
+                    client_id=user.client_id,
+                    user_id=user.id,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    changes={"email": clean_email},
+                )
 
     @classmethod
     async def reset_password(

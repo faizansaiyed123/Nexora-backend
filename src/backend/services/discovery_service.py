@@ -178,7 +178,7 @@ class WebsiteDiscoveryService:
         try:
             target_url = UrlSecurityService.validate_url(request.website_url, allow_empty=False)
         except SecurityValidationError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Invalid or prohibited website URL: {exc}")
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"Invalid or prohibited website URL: {exc}")
         source = await cls._get_or_create_client_source(db, client_id, target_url)
         job = JobModel(source_id=source.id, job_type=JobTypeEnum.SCHEMA_DISCOVERY, status=JobStatusEnum.RUNNING, started_at=datetime.now(timezone.utc), meta_info={"client_id": str(client_id), "target_url": target_url, "max_pages": request.max_pages})
         db.add(job)
