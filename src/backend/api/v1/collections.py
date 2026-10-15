@@ -32,7 +32,7 @@ from backend.core.error_messages import safe_collection_error
 from backend.services.source_service import SourceService
 
 
-router = APIRouter()
+router = APIRouter(prefix="/collections", tags=["Collections"])
 logger = logging.getLogger("nexora.collection")
 
 
@@ -125,11 +125,29 @@ async def run_collection(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Collection source is temporarily unavailable while its circuit breaker is open.",
-        )
+)
 
     # ---------------------------------------------------------
     # 2. Create collection job
     # ---------------------------------------------------------
+
+    # Clean up any stale RUNNING jobs for this match so the unique constraint
+    # is not violated on re-runs.
+    from sqlalchemy import text as sa_text
+
+    await session.execute(
+        sa_text(
+            "DELETE FROM jobs "
+            "WHERE source_id = :sid "
+            "AND status = :running"
+        ),
+        {
+            "sid": str(source_id_val),
+            "running": JobStatusEnum.RUNNING.value,
+        },
+    )
+    await session.flush()
+
 
     job = JobModel(
         source_id=source_id_val,
@@ -180,7 +198,31 @@ async def run_collection(
             max_retries=configuration.max_retries if configuration else 0,
         )
 
-        if configuration and configuration.requires_javascript:
+        # Auto-render fallback: when deterministic extraction produced nothing
+        # useful and the page looks JS-rendered or bot-challenged, transparently
+        # retry with a headless browser. Independent of requires_javascript so
+        # modern SPAs are covered without manual per-source configuration.
+        if not collection_result.success and (
+            collection_result.attributes.get("possible_dynamic_rendering")
+            or collection_result.attributes.get("possible_challenge")
+            or collection_result.attributes.get("auto_rendered")
+        ):
+            rendered_html = await render_page(
+                target_url_val,
+                timeout_seconds=configuration.timeout_seconds if configuration else 30,
+            )
+            if rendered_html:
+                collection_result = collector.from_rendered_html(
+                    rendered_html,
+                    target_url_val,
+                    response_time_ms=collection_result.response_time_ms,
+                    status_code=collection_result.status_code or 200,
+                    custom_selectors=selectors if isinstance(selectors, dict) else None,
+                )
+                collection_result.attributes["auto_rendered"] = True
+                collection_result.attributes["collection_engine"] = "PLAYWRIGHT_AUTO_RENDER"
+
+        elif configuration and configuration.requires_javascript:
             rendered_html = await render_page(
                 target_url_val,
                 timeout_seconds=configuration.timeout_seconds,
