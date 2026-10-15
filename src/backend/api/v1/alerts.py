@@ -9,7 +9,7 @@ from backend.db.session import get_db
 from backend.schemas.alert import AlertLogRead, AlertRuleCreate, AlertRuleRead, AlertRuleUpdate
 from backend.services.alert_service import AlertService
 
-router = APIRouter()
+router = APIRouter(prefix="/alerts", tags=["Alerts"])
 
 
 @router.get("/rules", response_model=list[AlertRuleRead], dependencies=[Depends(require_reader)])
