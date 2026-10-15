@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Optional
@@ -18,6 +19,8 @@ from backend.models.enums import AvailabilityStatusEnum, ErrorCategoryEnum, JobS
 from backend.models.observation import JobModel, ObservationModel, SnapshotModel
 from backend.services.alert_service import AlertService
 from backend.services.collection_service import CollectionService
+
+logger = logging.getLogger("nexora.collection_runner")
 from backend.services.source_service import SourceService
 
 settings = get_settings()
@@ -141,19 +144,35 @@ class CollectionRunner:
                 max_retries=config.max_retries if config else 0,
             )
 
-            if config and config.requires_javascript:
-                rendered = await render_page(
-                    match.target_url,
-                    timeout_seconds=config.timeout_seconds,
-                )
-                if rendered:
-                    result = self.collector.from_rendered_html(
-                        rendered,
+            # Auto-render fallback: when deterministic extraction produced nothing useful
+            # and the page looks JS-rendered or bot-challenged, transparently retry
+            # with a headless browser. This is independent of the
+            # requires_javascript flag so modern SPAs are covered without manual
+            # per-source configuration. Failures here are non-fatal: the caller
+            # already has a deterministic result to fall back to.
+            if not result.success and (
+                result.attributes.get("possible_dynamic_rendering")
+                or result.attributes.get("possible_challenge")
+                or result.attributes.get("auto_rendered")
+            ):
+                try:
+                    rendered = await render_page(
                         match.target_url,
-                        response_time_ms=result.response_time_ms,
-                        status_code=result.status_code or 200,
-                        custom_selectors=selectors,
+                        timeout_seconds=config.timeout_seconds if config else 30,
                     )
+                    if rendered:
+                        result = self.collector.from_rendered_html(
+                            rendered,
+                            match.target_url,
+                            response_time_ms=result.response_time_ms,
+                            status_code=result.status_code or 200,
+                            custom_selectors=selectors,
+                        )
+                        result.attributes["auto_rendered"] = True
+                        result.attributes["collection_engine"] = "PLAYWRIGHT_AUTO_RENDER"
+                except Exception as exc:
+                    logger.info("Auto-render failed for %s: %s", match.target_url, exc)
+                    result.attributes["auto_render_error"] = str(exc)
 
             availability = self._availability(result.availability)
 
