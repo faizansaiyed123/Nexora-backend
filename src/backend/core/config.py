@@ -70,6 +70,15 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-3.6-flash"
     gemini_discovery_enabled: bool = True
 
+    # Residential egress proxy for bot-protected sites (optional).
+    # Set to a full URL like https://user:pass@residential.proxy:8080 to
+    # tunnel Playwright traffic through a residential IP. SSRF validation is
+    # still performed on the destination hostname before the tunnel opens.
+    residential_proxy_url: str = ""
+    # When true, Playwright is used as a best-effort fallback for any page that
+    # looks JS-rendered or that failed deterministic extraction.
+    auto_render_enabled: bool = True
+
     # Background monitoring schedule
     scheduled_collection_interval_minutes: int = 60
     job_lease_seconds: int = 3600
