@@ -2,10 +2,18 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from backend.api.exception_handlers import app_exception_handler
-from backend.api.v1 import api_router
+from backend.api.v1.auth import router as auth_router
+from backend.api.v1.health import router as health_router
+from backend.api.v1.competitors import router as competitors_router
+from backend.api.v1.sources import router as sources_router
+from backend.api.v1.offerings import router as offerings_router
+from backend.api.v1.offering_matches import router as offering_matches_router
+from backend.api.v1.collections import router as collections_router
+from backend.api.v1.discovery import router as discovery_router
+from backend.api.v1.jobs import router as jobs_router
+from backend.api.v1.alerts import router as alerts_router
 from backend.core.config import get_settings
 from backend.core.exceptions import AppException
 from backend.services.url_security import SecurityValidationError
@@ -20,10 +28,10 @@ app = FastAPI(
     description="Backend API for Nexora competitive price intelligence.",
 )
 
-app.add_middleware(
-    TrustedHostMiddleware,
-    allowed_hosts=settings.allowed_hosts,
-)
+# app.add_middleware(
+#     TrustedHostMiddleware,
+#     allowed_hosts=settings.allowed_hosts,
+# )
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -46,14 +54,6 @@ async def security_validation_error_handler(
     request: Request,
     exc: SecurityValidationError,
 ) -> JSONResponse:
-    """Security validation failures must reach the browser.
-
-    SecurityValidationError is a ValueError and is not an AppException, so it
-    previously escaped every registered handler. Because CORSMiddleware runs
-    before exception handlers, an unhandled 500 never received
-    Access-Control-Allow-Origin and the browser discarded the response entirely,
-    surfacing only "Failed to fetch".
-    """
     logger.warning("Security validation rejected request on %s: %s", request.url.path, exc)
     return JSONResponse(
         status_code=422,
@@ -72,14 +72,6 @@ async def unhandled_exception_handler(
     request: Request,
     exc: Exception,
 ) -> JSONResponse:
-    """Catch-all that preserves CORS headers for any unhandled error.
-
-    CORSMiddleware runs before routing, so a 500 raised inside a request never
-    gets Access-Control-Allow-Origin on its response and the browser blocks it.
-    Returning the response here (after CORS has already added its headers)
-    guarantees the client receives a structured error instead of a silent
-    network failure.
-    """
     logger.exception("Unhandled exception on %s", request.url.path)
     return JSONResponse(
         status_code=500,
@@ -93,9 +85,23 @@ async def unhandled_exception_handler(
     )
 
 
-app.include_router(api_router)
+# Include each router directly with /v1 prefix
+app.include_router(health_router, prefix="/v1")
+app.include_router(auth_router, prefix="/v1")
+app.include_router(competitors_router, prefix="/v1")
+app.include_router(sources_router, prefix="/v1")
+app.include_router(offerings_router, prefix="/v1")
+app.include_router(offering_matches_router, prefix="/v1")
+app.include_router(collections_router, prefix="/v1")
+app.include_router(discovery_router, prefix="/v1")
+app.include_router(jobs_router, prefix="/v1")
+app.include_router(alerts_router, prefix="/v1")
 
 
 @app.get("/")
 async def root() -> dict[str, str]:
     return {"message": "Nexora Backend is running"}
+
+@app.get("/debug/cors")
+async def debug_cors():
+    return {"cors_origins": settings.cors_origins, "allowed_hosts": settings.allowed_hosts}
