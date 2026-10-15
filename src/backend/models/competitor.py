@@ -19,7 +19,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.db.base import Base
@@ -172,8 +172,8 @@ class SourceConfigurationModel(Base):
     user_agent_strategy: Mapped[str] = mapped_column(String(50), default="ROTATE_CHROME", nullable=False)
     requires_proxy: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     requires_javascript: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    custom_headers: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
-    extraction_selectors: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    custom_headers: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    extraction_selectors: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -206,7 +206,7 @@ class OfferingMatchModel(Base):
         nullable=False,
     )
     confidence_score: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
-    extraction_selectors: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    extraction_selectors: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

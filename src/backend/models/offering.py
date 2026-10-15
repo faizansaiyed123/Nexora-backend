@@ -3,7 +3,7 @@ Offering models for the Price Intelligence Platform.
 
 Universal, vertical-agnostic architecture:
 - Fixed Core fields for indexing and fast search/filtering
-- Sanitized JSONB dynamic attributes for unlimited domain flexibility
+- Sanitized JSON dynamic attributes for unlimited domain flexibility
 - Dynamic Field Definitions with automatic schema discovery
 """
 
@@ -23,7 +23,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.db.base import Base
@@ -111,7 +111,7 @@ class DynamicFieldDefinitionModel(Base):
     )
 
     options: Mapped[Optional[Dict[str, Any]]] = mapped_column(
-        JSONB,
+        JSON,
         nullable=True,
     )
 
@@ -242,9 +242,9 @@ class OfferingModel(Base):
         nullable=True,
     )
 
-    # Dynamic JSONB attributes (Sanitized & vertical-agnostic)
+    # Dynamic JSON attributes (Sanitized & vertical-agnostic)
     attributes: Mapped[Dict[str, Any]] = mapped_column(
-        JSONB,
+        JSON,
         default=dict,
         nullable=False,
     )

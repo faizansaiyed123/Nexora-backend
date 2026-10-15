@@ -19,7 +19,7 @@ from sqlalchemy import (
     Text,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.db.base import Base
@@ -69,7 +69,7 @@ class JobModel(Base):
         nullable=True,
     )
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    meta_info: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    meta_info: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -78,14 +78,8 @@ class JobModel(Base):
 
     __table_args__ = (
         Index(
-            "uq_jobs_active_scheduled_match",
-            text("(meta_info->>'offering_match_id')"),
-            unique=True,
-            postgresql_where=text(
-                "job_type = 'SCHEDULED_CRAWL' "
-                "AND status IN ('PENDING', 'RUNNING') "
-                "AND (meta_info->>'offering_match_id') IS NOT NULL"
-            ),
+            "idx_jobs_meta_info",
+            "meta_info",
         ),
     )
 
@@ -121,7 +115,7 @@ class ObservationModel(Base):
     response_time_ms: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     http_status_code: Mapped[int] = mapped_column(Integer, default=200, nullable=False)
     raw_payload: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    extracted_attributes: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    extracted_attributes: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     observed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

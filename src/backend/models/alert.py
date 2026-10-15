@@ -17,7 +17,7 @@ from sqlalchemy import (
     String,
     Text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.db.base import Base
@@ -50,7 +50,7 @@ class AlertRuleModel(Base):
         nullable=False,
     )
     threshold_value: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    target_channels: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    target_channels: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     cooldown_minutes: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
     last_triggered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -92,7 +92,7 @@ class AlertLogModel(Base):
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
     triggered_value: Mapped[Optional[float]] = mapped_column(Numeric(14, 4), nullable=True)
-    payload_snapshot: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    payload_snapshot: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
