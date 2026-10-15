@@ -27,7 +27,7 @@ from sqlalchemy import select
 from backend.models.observation import JobModel
 from backend.models.competitor import CompetitorModel, SourceModel
 
-router = APIRouter()
+router = APIRouter(prefix="/discovery", tags=["Discovery"])
 
 
 @router.post(
