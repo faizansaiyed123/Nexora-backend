@@ -4,6 +4,7 @@ Validates inbound URLs to prevent Server-Side Request Forgery (SSRF),
 internal network probing, link-local / cloud metadata attacks, and payload bombing.
 """
 
+import asyncio
 import ipaddress
 import re
 import socket
@@ -83,6 +84,11 @@ class UrlSecurityService:
         if not candidates:
             raise SecurityValidationError(f"Domain '{hostname}' did not resolve to a usable address.")
         return candidates[0]
+
+    @classmethod
+    async def resolve_and_validate_host_async(cls, hostname: str, port: int) -> str:
+        """Async version that runs blocking DNS resolution in a thread."""
+        return await asyncio.to_thread(cls.resolve_and_validate_host, hostname, port)
 
     @classmethod
     def validate_url(cls, url: Optional[str], allow_empty: bool = True) -> Optional[str]:
