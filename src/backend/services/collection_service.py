@@ -4,6 +4,8 @@ import json
 import re
 import time
 import asyncio
+import random
+import logging
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
@@ -12,9 +14,13 @@ from urllib.parse import urljoin
 from backend.services.url_security import SecurityValidationError, UrlSecurityService
 from backend.services.pinned_http import PinnedDNSHTTPTransport
 from backend.core.error_messages import safe_collection_error
+from backend.core.config import get_settings
 
 import httpx
 from bs4 import BeautifulSoup
+
+logger = logging.getLogger("nexora.collection")
+_settings = get_settings()
 
 
 @dataclass
@@ -101,6 +107,44 @@ class CollectionService:
         "Pragma": "no-cache",
     }
 
+    # ------------------------------------------------------------------
+    # Retry / backoff helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _backoff_delay(attempt: int, base: float = 0.5, cap: float = 8.0) -> float:
+        """Exponential backoff with full jitter.
+
+        Full jitter (random between 0 and the exponential value) is used
+        instead of equal jitter because it spreads retries more evenly across
+        a worker fleet and avoids thundering-herd synchronisation on the
+        target server.
+        """
+        if attempt <= 0:
+            return 0.0
+        exponential = min(cap, base * (2 ** (attempt - 1)))
+        return random.uniform(0.0, exponential)
+
+    @staticmethod
+    def _is_retryable_status(status_code: int) -> bool:
+        return status_code in {408, 425, 429, 500, 502, 503, 504}
+
+    @staticmethod
+    def _is_retryable_exception(exc: BaseException) -> bool:
+        if isinstance(exc, httpx.TimeoutException):
+            return True
+        if isinstance(exc, httpx.ConnectError):
+            return True
+        if isinstance(exc, httpx.ReadError):
+            return True
+        if isinstance(exc, httpx.WriteError):
+            return True
+        if isinstance(exc, httpx.RemoteProtocolError):
+            return True
+        if isinstance(exc, httpx.ConnectTimeout):
+            return True
+        return False
+
     # =========================================================
     # PUBLIC API
     # =========================================================
@@ -175,18 +219,18 @@ class CollectionService:
                         if response is None:
                             raise httpx.HTTPError("No HTTP response received")
 
-                        retryable_status = response.status_code in {408, 425, 429, 500, 502, 503, 504}
+                        retryable_status = self._is_retryable_status(response.status_code)
                         if retryable_status and current_attempt < max(0, max_retries):
                             current_attempt += 1
-                            await asyncio.sleep(min(8.0, 0.5 * (2 ** (current_attempt - 1))))
+                            await asyncio.sleep(self._backoff_delay(current_attempt))
                             continue
 
                         break
                     except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError, httpx.WriteError, httpx.RemoteProtocolError) as exc:
-                        if current_attempt >= max(0, max_retries):
+                        if not self._is_retryable_exception(exc) or current_attempt >= max(0, max_retries):
                             raise
                         current_attempt += 1
-                        await asyncio.sleep(min(8.0, 0.5 * (2 ** (current_attempt - 1))))
+                        await asyncio.sleep(self._backoff_delay(current_attempt))
 
                 final_url = current_url
             response_time_ms = int(
@@ -403,6 +447,38 @@ class CollectionService:
                         "possible_challenge"
                     ] = True
 
+            # =================================================
+            # AUTO-RENDER FALLBACK (best-effort)
+            # =================================================
+            #
+            # When deterministic extraction produced nothing useful and the
+            # page looks JS-rendered or bot-challenged, transparently retry with
+            # a headless browser. This is opt-out via settings.auto_render_enabled
+            # and never blocks the caller when Playwright is unavailable.
+
+            if (
+                extraction_status in ("NO_DATA", "PARTIAL")
+                and _settings.auto_render_enabled
+                and (
+                    attributes.get("possible_dynamic_rendering")
+                    or attributes.get("possible_challenge")
+                    or self._looks_like_dynamic_page(soup, raw_payload)
+                    or self._looks_like_challenge(soup, raw_payload)
+                )
+            ):
+                rendered = self._try_render(final_url, timeout_seconds=int(timeout))
+                if rendered is not None:
+                    rendered_result = self.from_rendered_html(
+                        rendered,
+                        final_url,
+                        response_time_ms=response_time_ms,
+                        status_code=response.status_code,
+                        custom_selectors=custom_selectors,
+                    )
+                    rendered_result.attributes["auto_rendered"] = True
+                    rendered_result.attributes["collection_engine"] = "PLAYWRIGHT_AUTO_RENDER"
+                    return rendered_result
+
             success = (
                 extraction_status != "NO_DATA"
             )
@@ -537,6 +613,16 @@ class CollectionService:
             extraction_status=extraction_status,
             error=None if success else "Rendered page contained no useful competitive data.",
         )
+
+    async def _try_render(self, url: str, timeout_seconds: int = 20) -> Optional[str]:
+        """Best-effort Playwright render. Returns None when unavailable."""
+        try:
+            from backend.collectors.browser import render_page
+
+            return await render_page(url, timeout_seconds=timeout_seconds)
+        except Exception as exc:
+            logger.info("Auto-render skipped for %s: %s", url, exc)
+            return None
 
     # =========================================================
     # HTML EXTRACTION
@@ -2090,9 +2176,57 @@ class CollectionService:
             "captcha",
             "robot check",
             "bot detection",
+            "are you a human",
+            "i'm not a robot",
+            "just a moment",
+            "moment please",
+            "please wait while we verify",
+            "ddos protection",
+            "browser check",
+            "attention required",
+            "you have been blocked",
+            "request blocked",
+            "an error occurred",
+            "cloudflare",
+            "akamai",
+            "datadome",
+            "perimeterx",
+            "incapsula",
+            "sucuri",
+            "site protection",
+            "challenge-platform",
+            "cf-chl",
+            "jschallenge",
+            "ddos-guard",
+            "redirecting...",
+            "please enable javascript",
         ]
 
-        return any(
+        if any(
             phrase in text
             for phrase in challenge_phrases
-        )
+        ):
+            return True
+
+        # CDN-specific markers in markup (case-insensitive).
+        lower_html = html.lower()
+        cdn_markers = [
+            "cf-chl-bypass",
+            "cf-chl-script",
+            "cf-browser-verification",
+            "datadome",
+            "pxc2",
+            "akamai",
+            "incapsula",
+            "sucuri",
+            "perimeterx",
+            "bot-detection",
+            "jschallenge",
+            "ddos-guard",
+            "captcha-container",
+            "g-recaptcha",
+            "hcaptcha",
+            "arkoselabs",
+            "funcaptcha",
+        ]
+        return any(marker in lower_html for marker in cdn_markers)
