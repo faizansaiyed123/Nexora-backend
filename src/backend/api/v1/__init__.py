@@ -10,7 +10,7 @@ from backend.api.v1.collections import router as collections_router
 from backend.api.v1.discovery import router as discovery_router
 from backend.api.v1.alerts import router as alerts_router
 
-api_router = APIRouter(prefix="/v1")
+api_router = APIRouter()
 
 
 api_router.include_router(
