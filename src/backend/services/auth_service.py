@@ -10,6 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+logger = logging.getLogger("nexora.auth")
+
 from backend.core.email_validator import validate_and_normalize_email, validate_password_strength
 from backend.core.config import get_settings
 from backend.core.exceptions import (
@@ -332,11 +334,16 @@ class AuthService:
         session_id = uuid.uuid4().hex
         refresh_token_payload = f"{user.id}:{session_id}:{raw_refresh_token}"
 
-        await TokenSessionStore.store_refresh_session(
-            user_id=str(user.id),
-            session_id=session_id,
-            token_hash=hash_token(raw_refresh_token),
-        )
+        try:
+            await TokenSessionStore.store_refresh_session(
+                user_id=str(user.id),
+                session_id=session_id,
+                token_hash=hash_token(raw_refresh_token),
+            )
+        except RuntimeError:
+            # Redis unavailable: refresh tokens are not persisted. Access
+            # tokens still work; refresh will require re-login.
+            logger.warning("Redis unavailable: refresh session not persisted for user %s", user.id)
 
         return user, access_token, refresh_token_payload, expires_in
 
