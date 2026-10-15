@@ -23,7 +23,7 @@ from backend.core.deps import (
     require_reader,
 )
 
-router = APIRouter()
+router = APIRouter(prefix="/competitors", tags=["Competitors"])
 
 
 @router.post(

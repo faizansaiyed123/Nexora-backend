@@ -45,7 +45,7 @@ from backend.schemas.offering import (
 )
 from backend.services.offering_service import OfferingService
 
-router = APIRouter()
+router = APIRouter(prefix="/offerings", tags=["Offerings"])
 
 
 # ============================================================================

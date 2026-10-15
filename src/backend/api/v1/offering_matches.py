@@ -26,7 +26,7 @@ from backend.schemas.offering_match import (
 from backend.services.offering_match_service import OfferingMatchService
 
 
-router = APIRouter()
+router = APIRouter(prefix="/offering-matches", tags=["Offering Matches"])
 
 
 @router.post(

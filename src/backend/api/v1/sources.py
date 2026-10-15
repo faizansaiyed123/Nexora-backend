@@ -26,7 +26,7 @@ from backend.schemas.competitor import (
 from backend.services.source_service import SourceService
 
 
-router = APIRouter()
+router = APIRouter(prefix="/sources", tags=["Sources"])
 
 
 @router.post(

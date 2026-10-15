@@ -11,7 +11,7 @@ from backend.models.competitor import CompetitorModel, SourceModel
 from backend.models.observation import JobModel
 from backend.schemas.observation import JobRead
 
-router = APIRouter()
+router = APIRouter(prefix="/jobs", tags=["Jobs"])
 
 
 @router.get("", response_model=list[JobRead], dependencies=[Depends(require_reader)])
