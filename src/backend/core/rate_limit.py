@@ -172,7 +172,8 @@ class TokenSessionStore:
     ) -> None:
         redis = await get_redis_client()
         if not redis:
-            raise RuntimeError("Redis is required for refresh sessions.")
+            logger.debug("Redis unavailable; refresh session not persisted (stateless mode).")
+            return
         try:
             await redis.setex(f"refresh:{user_id}:{session_id}", ttl_seconds, token_hash)
         except Exception as e:
