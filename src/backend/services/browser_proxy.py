@@ -22,6 +22,7 @@ from backend.services.url_security import SecurityValidationError, UrlSecuritySe
 logger = logging.getLogger("nexora.browser_proxy")
 _MAX_HEADERS = 64 * 1024
 _CONNECT_TIMEOUT = 20.0
+_TUNNEL_TIMEOUT = 60.0
 
 
 def _parse_upstream_proxy(proxy_url: str) -> tuple[str, int, Optional[str], Optional[str]]:
@@ -35,8 +36,14 @@ def _parse_upstream_proxy(proxy_url: str) -> tuple[str, int, Optional[str], Opti
 
 
 async def _resolve_and_validate_host_async(hostname: str, port: int) -> str:
-    """Run the blocking SSRF DNS resolution in a thread so the event loop is not stalled."""
-    return await asyncio.to_thread(UrlSecurityService.resolve_and_validate_host, hostname, port)
+    """Resolve hostname and validate it. Uses a thread to avoid blocking the event loop."""
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(UrlSecurityService.resolve_and_validate_host, hostname, port),
+            timeout=10.0,
+        )
+    except asyncio.TimeoutError:
+        raise SecurityValidationError(f"DNS resolution for {hostname} timed out.")
 
 
 class SafeBrowserProxy:
@@ -76,13 +83,15 @@ class SafeBrowserProxy:
     async def close(self) -> None:
         if self._server is not None:
             self._server.close()
-            await self._server.wait_closed()
             self._server = None
 
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         upstream_reader = upstream_writer = None
         try:
-            header_block = await reader.readuntil(b"\r\n\r\n")
+            header_block = await asyncio.wait_for(
+                reader.readuntil(b"\r\n\r\n"),
+                timeout=_CONNECT_TIMEOUT,
+            )
             if len(header_block) > _MAX_HEADERS:
                 raise SecurityValidationError("Proxy request headers exceed the allowed size.")
 
@@ -111,7 +120,10 @@ class SafeBrowserProxy:
                     await self._send_proxy_connect(
                         upstream_writer, host, port, self._upstream_user, self._upstream_pass
                     )
-                    response_line = await upstream_reader.readuntil(b"\r\n\r\n")
+                    response_line = await asyncio.wait_for(
+                        upstream_reader.readuntil(b"\r\n\r\n"),
+                        timeout=_CONNECT_TIMEOUT,
+                    )
                     if not response_line.startswith(b"200"):
                         raise SecurityValidationError(
                             f"Residential proxy rejected CONNECT to {host}:{port}"
@@ -148,7 +160,10 @@ class SafeBrowserProxy:
                     self._upstream_user,
                     self._upstream_pass,
                 )
-                response_line = await upstream_reader.readuntil(b"\r\n\r\n")
+                response_line = await asyncio.wait_for(
+                    upstream_reader.readuntil(b"\r\n\r\n"),
+                    timeout=_CONNECT_TIMEOUT,
+                )
                 if not response_line.startswith(b"200"):
                     raise SecurityValidationError(
                         f"Residential proxy rejected {method} {target}"
@@ -178,11 +193,17 @@ class SafeBrowserProxy:
                         content_length = 0
                     break
             if content_length:
-                upstream_writer.write(await reader.readexactly(content_length))
+                upstream_writer.write(await asyncio.wait_for(
+                    reader.readexactly(content_length),
+                    timeout=_CONNECT_TIMEOUT,
+                ))
             await upstream_writer.drain()
 
             while True:
-                chunk = await upstream_reader.read(64 * 1024)
+                chunk = await asyncio.wait_for(
+                    upstream_reader.read(64 * 1024),
+                    timeout=_CONNECT_TIMEOUT,
+                )
                 if not chunk:
                     break
                 writer.write(chunk)
@@ -283,12 +304,15 @@ class SafeBrowserProxy:
         async def pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
             try:
                 while True:
-                    data = await reader.read(64 * 1024)
+                    data = await asyncio.wait_for(
+                        reader.read(64 * 1024),
+                        timeout=_TUNNEL_TIMEOUT,
+                    )
                     if not data:
                         break
                     writer.write(data)
                     await writer.drain()
-            except (ConnectionError, asyncio.IncompleteReadError):
+            except (asyncio.TimeoutError, ConnectionError, asyncio.IncompleteReadError):
                 pass
 
         await asyncio.gather(
