@@ -15,6 +15,7 @@ from backend.services.url_security import SecurityValidationError, UrlSecuritySe
 from backend.services.pinned_http import PinnedDNSHTTPTransport
 from backend.core.error_messages import safe_collection_error
 from backend.core.config import get_settings
+from backend.collectors.universal_extractor import UniversalExtractor, get_site_preset
 
 import httpx
 from bs4 import BeautifulSoup
@@ -349,21 +350,55 @@ class CollectionService:
                 "html.parser",
             )
 
-            extracted = self._extract_html(
-                soup=soup,
-                html=raw_payload,
-                base_url=final_url,
-                custom_selectors=custom_selectors,
+            # Production pipeline: UniversalExtractor first, then legacy extractor.
+            extractor = UniversalExtractor()
+            ue_result = extractor.extract(
+                raw_payload, final_url, custom_selectors=custom_selectors
             )
+
+            price = ue_result.price
+            currency = ue_result.currency
+            availability = ue_result.availability
+            attributes = dict(ue_result.attributes)
+
+            # Fallback to legacy extractor if UniversalExtractor found nothing useful.
+            if price is None and availability in (None, "UNKNOWN"):
+                legacy = self._extract_html(
+                    soup=soup,
+                    html=raw_payload,
+                    base_url=final_url,
+                    custom_selectors=custom_selectors,
+                )
+                if price is None:
+                    price = legacy["price"]
+                if currency is None:
+                    currency = legacy["currency"]
+                if availability in (None, "UNKNOWN"):
+                    availability = legacy["availability"]
+                attributes = {**legacy["attributes"], **attributes}
+
+            # Merge discovered product fields into attributes.
+            for field_name in ("name", "sku", "brand", "category", "image", "description"):
+                value = getattr(ue_result, field_name, None)
+                if value:
+                    attributes.setdefault(field_name, value)
+
+            if ue_result.strategy_used != "NONE":
+                attributes["extraction_strategy"] = ue_result.strategy_used
+                attributes["extraction_confidence"] = ue_result.confidence
 
             extraction_status = (
                 self._determine_extraction_status(
-                    extracted
+                    {
+                        "price": price,
+                        "currency": currency,
+                        "availability": availability,
+                    }
                 )
             )
 
             attributes = {
-                **extracted["attributes"],
+                **attributes,
                 "http_status": response.status_code,
                 "content_type": content_type,
                 "content_length": content_length,
@@ -619,27 +654,55 @@ class CollectionService:
         custom_selectors: Optional[dict[str, Any]] = None,
     ) -> CollectionResult:
         """Extract competitive data from HTML already rendered by a browser."""
-        soup = BeautifulSoup(html, "html.parser")
-        extracted = self._extract_html(
-            soup=soup,
-            html=html,
-            base_url=url,
-            custom_selectors=custom_selectors,
+        # Production pipeline: UniversalExtractor first, then legacy extractor.
+        extractor = UniversalExtractor()
+        ue_result = extractor.extract(html, url, custom_selectors=custom_selectors)
+
+        price = ue_result.price
+        currency = ue_result.currency
+        availability = ue_result.availability
+        attributes = dict(ue_result.attributes)
+
+        # Fallback to legacy extractor if UniversalExtractor found nothing useful.
+        if price is None and availability in (None, "UNKNOWN"):
+            soup = BeautifulSoup(html, "html.parser")
+            legacy = self._extract_html(
+                soup=soup,
+                html=html,
+                base_url=url,
+                custom_selectors=custom_selectors,
+            )
+            if price is None:
+                price = legacy["price"]
+            if currency is None:
+                currency = legacy["currency"]
+            if availability in (None, "UNKNOWN"):
+                availability = legacy["availability"]
+            attributes = {**legacy["attributes"], **attributes}
+
+        # Merge discovered product fields into attributes.
+        for field_name in ("name", "sku", "brand", "category", "image", "description"):
+            value = getattr(ue_result, field_name, None)
+            if value:
+                attributes.setdefault(field_name, value)
+
+        if ue_result.strategy_used != "NONE":
+            attributes["extraction_strategy"] = ue_result.strategy_used
+            attributes["extraction_confidence"] = ue_result.confidence
+
+        extraction_status = self._determine_extraction_status(
+            {"price": price, "currency": currency, "availability": availability}
         )
-        extraction_status = self._determine_extraction_status(extracted)
-        success = extracted["price"] is not None or extracted["availability"] not in (None, "UNKNOWN")
+        success = price is not None or availability not in (None, "UNKNOWN")
         return CollectionResult(
             success=success,
             url=url,
             status_code=status_code,
             response_time_ms=response_time_ms,
-            price=extracted["price"],
-            currency=extracted["currency"],
-            availability=extracted["availability"],
-            attributes={
-                **extracted["attributes"],
-                "collection_engine": "PLAYWRIGHT_BROWSER",
-            },
+            price=price,
+            currency=currency,
+            availability=availability,
+            attributes=attributes,
             raw_payload=html,
             content_type="text/html",
             content_length=len(html.encode("utf-8")),
