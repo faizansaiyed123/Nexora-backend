@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -154,11 +155,15 @@ class CollectionRunner:
                 result.attributes.get("possible_dynamic_rendering")
                 or result.attributes.get("possible_challenge")
                 or result.attributes.get("auto_rendered")
+                or result.extraction_status in ("TIMEOUT", "NO_DATA", "HTTP_ERROR")
             ):
                 try:
-                    rendered = await render_page(
-                        match.target_url,
-                        timeout_seconds=config.timeout_seconds if config else 30,
+                    rendered = await asyncio.wait_for(
+                        render_page(
+                            match.target_url,
+                            timeout_seconds=config.timeout_seconds if config else 30,
+                        ),
+                        timeout=(config.timeout_seconds if config else 30) + 15,
                     )
                     if rendered:
                         result = self.collector.from_rendered_html(
