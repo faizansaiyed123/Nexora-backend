@@ -457,7 +457,7 @@ class CollectionService:
             # and never blocks the caller when Playwright is unavailable.
 
             if (
-                extraction_status in ("NO_DATA", "PARTIAL")
+                extraction_status in ("NO_DATA", "PARTIAL", "TIMEOUT", "HTTP_ERROR")
                 and _settings.auto_render_enabled
                 and (
                     attributes.get("possible_dynamic_rendering")
@@ -466,7 +466,7 @@ class CollectionService:
                     or self._looks_like_challenge(soup, raw_payload)
                 )
             ):
-                rendered = self._try_render(final_url, timeout_seconds=int(timeout))
+                rendered = await self._try_render(final_url, timeout_seconds=int(timeout))
                 if rendered is not None:
                     rendered_result = self.from_rendered_html(
                         rendered,
@@ -517,6 +517,20 @@ class CollectionService:
                 (time.perf_counter() - start_time) * 1000
             )
 
+            # Try auto-render fallback for slow/JS-heavy sites.
+            rendered = await self._try_render(url, timeout_seconds=max(int(timeout) * 3, 30))
+            if rendered is not None:
+                rendered_result = self.from_rendered_html(
+                    rendered,
+                    url,
+                    response_time_ms=response_time_ms,
+                    status_code=200,
+                    custom_selectors=custom_selectors,
+                )
+                rendered_result.attributes["auto_rendered"] = True
+                rendered_result.attributes["collection_engine"] = "PLAYWRIGHT_AUTO_RENDER"
+                return rendered_result
+
             return CollectionResult(
                 success=False,
                 url=url,
@@ -525,7 +539,10 @@ class CollectionService:
                 price=None,
                 currency=None,
                 availability=None,
-                attributes={},
+                attributes={
+                    "possible_dynamic_rendering": True,
+                    "possible_challenge": False,
+                },
                 extraction_status="TIMEOUT",
                 error="Request timeout",
             )
@@ -539,6 +556,22 @@ class CollectionService:
             response_time_ms = int(
                 (time.perf_counter() - start_time) * 1000
             )
+
+            # Try auto-render fallback for HTTP errors that may be bot challenges.
+            rendered = await self._try_render(url, timeout_seconds=max(int(timeout) * 3, 30))
+            if rendered is not None:
+                rendered_result = self.from_rendered_html(
+                    rendered,
+                    url,
+                    response_time_ms=response_time_ms,
+                    status_code=200,
+                    custom_selectors=custom_selectors,
+                )
+                rendered_result.attributes["auto_rendered"] = True
+                rendered_result.attributes["collection_engine"] = "PLAYWRIGHT_AUTO_RENDER"
+                if not rendered_result.success:
+                    rendered_result.error = safe_collection_error(exc)
+                return rendered_result
 
             return CollectionResult(
                 success=False,
@@ -619,7 +652,13 @@ class CollectionService:
         try:
             from backend.collectors.browser import render_page
 
-            return await render_page(url, timeout_seconds=timeout_seconds)
+            return await asyncio.wait_for(
+                render_page(url, timeout_seconds=timeout_seconds),
+                timeout=timeout_seconds + 15,
+            )
+        except asyncio.TimeoutError:
+            logger.info("Auto-render timed out for %s", url)
+            return None
         except Exception as exc:
             logger.info("Auto-render skipped for %s: %s", url, exc)
             return None
