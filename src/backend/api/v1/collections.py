@@ -206,10 +206,14 @@ async def run_collection(
             collection_result.attributes.get("possible_dynamic_rendering")
             or collection_result.attributes.get("possible_challenge")
             or collection_result.attributes.get("auto_rendered")
+            or collection_result.extraction_status in ("TIMEOUT", "NO_DATA", "HTTP_ERROR")
         ):
-            rendered_html = await render_page(
-                target_url_val,
-                timeout_seconds=configuration.timeout_seconds if configuration else 30,
+            rendered_html = await asyncio.wait_for(
+                render_page(
+                    target_url_val,
+                    timeout_seconds=configuration.timeout_seconds if configuration else 30,
+                ),
+                timeout=(configuration.timeout_seconds if configuration else 30) + 15,
             )
             if rendered_html:
                 collection_result = collector.from_rendered_html(
@@ -223,9 +227,12 @@ async def run_collection(
                 collection_result.attributes["collection_engine"] = "PLAYWRIGHT_AUTO_RENDER"
 
         elif configuration and configuration.requires_javascript:
-            rendered_html = await render_page(
-                target_url_val,
-                timeout_seconds=configuration.timeout_seconds,
+            rendered_html = await asyncio.wait_for(
+                render_page(
+                    target_url_val,
+                    timeout_seconds=configuration.timeout_seconds,
+                ),
+                timeout=configuration.timeout_seconds + 15,
             )
             if rendered_html:
                 collection_result = collector.from_rendered_html(
