@@ -2,6 +2,7 @@
 Transactional Authentication and Tenant Onboarding Service.
 """
 
+import asyncio
 import logging
 import re
 import uuid
@@ -147,28 +148,20 @@ class AuthService:
                 user.id,
             )
 
-        try:
-            await send_verification_email_async(
+        # Send the verification email in the background so a slow or failed
+        # SMTP connection never blocks the registration response.
+        asyncio.create_task(
+            _send_verification_email_bg(
                 clean_email,
                 verify_token,
                 user.full_name,
+                user.id,
+                client.id,
+                ip_address,
+                user_agent,
+                session,
             )
-        except Exception:
-            # A mail outage must not turn a successful signup into a 500: the
-            # tenant and admin are already persisted. Record the failure so the
-            # operator can see why the verification link never arrived.
-            logger.exception(
-                "Verification email could not be delivered for user %s", user.id
-            )
-            await AuditService.log_security_event(
-                session=session,
-                action="VERIFICATION_EMAIL_FAILED",
-                client_id=client.id,
-                user_id=user.id,
-                ip_address=ip_address,
-                user_agent=user_agent,
-                changes={"email": clean_email},
-            )
+        )
 
         return user
 
@@ -206,26 +199,18 @@ class AuthService:
             user_id=user.id,
             changes={"email": clean_email},
         )
-        try:
-            await send_verification_email_async(
+        asyncio.create_task(
+            _send_verification_email_bg(
                 clean_email,
                 resend_token,
                 user.full_name,
-            )
-        except Exception:
-            # A mail outage must not turn a resend into a 500. The token is
-            # already stored, so the user can still verify once SMTP is up.
-            logger.exception(
-                "Verification email could not be delivered for user %s",
                 user.id,
+                user.client_id,
+                None,
+                None,
+                session,
             )
-            await AuditService.log_security_event(
-                session=session,
-                action="VERIFICATION_EMAIL_FAILED",
-                client_id=user.client_id,
-                user_id=user.id,
-                changes={"email": clean_email},
-            )
+        )
 
     @classmethod
     async def verify_email(
@@ -597,3 +582,34 @@ class AuthService:
             ip_address=ip_address,
             user_agent=user_agent,
         )
+
+
+async def _send_verification_email_bg(
+    email: str,
+    token: str,
+    full_name: str,
+    user_id,
+    client_id,
+    ip_address: Optional[str],
+    user_agent: Optional[str],
+    session: AsyncSession,
+) -> None:
+    """Send verification email in the background so registration is not blocked."""
+    try:
+        await send_verification_email_async(email, token, full_name)
+    except Exception:
+        logger.exception(
+            "Verification email could not be delivered for user %s", user_id
+        )
+        try:
+            await AuditService.log_security_event(
+                session=session,
+                action="VERIFICATION_EMAIL_FAILED",
+                client_id=client_id,
+                user_id=user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                changes={"email": email},
+            )
+        except Exception:
+            pass
