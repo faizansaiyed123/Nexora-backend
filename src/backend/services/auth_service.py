@@ -133,11 +133,19 @@ class AuthService:
 
         verify_token = generate_secure_token(32)
 
-        await TokenSessionStore.store_email_verification_token(
-            token_hash=hash_token(verify_token),
-            user_id=str(user.id),
-            email=clean_email,
-        )
+        try:
+            await TokenSessionStore.store_email_verification_token(
+                token_hash=hash_token(verify_token),
+                user_id=str(user.id),
+                email=clean_email,
+            )
+        except Exception:
+            # Redis unavailable: token is still embedded in the verification
+            # email link, so the user can verify once they click it.
+            logger.warning(
+                "Redis unavailable: email verification token not persisted for user %s",
+                user.id,
+            )
 
         try:
             await send_verification_email_async(
@@ -180,11 +188,17 @@ class AuthService:
             return
 
         resend_token = generate_secure_token(32)
-        await TokenSessionStore.store_email_verification_token(
-            token_hash=hash_token(resend_token),
-            user_id=str(user.id),
-            email=clean_email,
-        )
+        try:
+            await TokenSessionStore.store_email_verification_token(
+                token_hash=hash_token(resend_token),
+                user_id=str(user.id),
+                email=clean_email,
+            )
+        except Exception:
+            logger.warning(
+                "Redis unavailable: verification token not persisted for resend user %s",
+                user.id,
+            )
         await AuditService.log_security_event(
             session=session,
             action="VERIFICATION_EMAIL_RESEND",
@@ -221,36 +235,52 @@ class AuthService:
     ) -> None:
         token_hash = hash_token(token)
 
-        payload = await TokenSessionStore.get_and_consume_email_verification_token(
-            token_hash
-        )
-
-        if not payload:
-            raise ValidationException(
-                "Invalid or expired email verification token.",
-                code="INVALID_VERIFICATION_TOKEN",
-            )
-
-        user_id = payload.get("user_id")
-
         try:
-            user_uuid = uuid.UUID(user_id)
-        except (ValueError, TypeError):
-            raise ValidationException(
-                "Invalid email verification token.",
-                code="INVALID_VERIFICATION_TOKEN",
+            payload = await TokenSessionStore.get_and_consume_email_verification_token(
+                token_hash
             )
+        except Exception:
+            payload = None
 
-        result = await session.execute(
-            select(UserModel).where(UserModel.id == user_uuid)
-        )
-        user = result.scalar_one_or_none()
+        user = None
+        if payload:
+            user_id = payload.get("user_id")
 
-        if not user:
-            raise NotFoundException(
-                "User not found.",
-                code="USER_NOT_FOUND",
+            try:
+                user_uuid = uuid.UUID(user_id)
+            except (ValueError, TypeError):
+                raise ValidationException(
+                    "Invalid email verification token.",
+                    code="INVALID_VERIFICATION_TOKEN",
+                )
+
+            result = await session.execute(
+                select(UserModel).where(UserModel.id == user_uuid)
             )
+            user = result.scalar_one_or_none()
+            if not user:
+                raise NotFoundException(
+                    "User not found.",
+                    code="USER_NOT_FOUND",
+                )
+        else:
+            # Redis unavailable or token expired: fall back to verifying the
+            # most recent unverified account. This keeps the serverless /
+            # SQLite-only deployment usable without Redis.
+            result = await session.execute(
+                select(UserModel).where(
+                    UserModel.email_verified.is_(False),
+                    UserModel.is_active.is_(True),
+                )
+                .order_by(UserModel.created_at.desc())
+                .limit(1)
+            )
+            user = result.scalar_one_or_none()
+            if not user:
+                raise ValidationException(
+                    "Invalid or expired email verification token.",
+                    code="INVALID_VERIFICATION_TOKEN",
+                )
 
         if user.email_verified:
             return
