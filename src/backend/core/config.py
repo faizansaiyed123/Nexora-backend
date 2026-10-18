@@ -16,6 +16,19 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/nexora"
 
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _normalize_async_database_url(cls, value: Any) -> Any:
+        """Accept Render's standard Postgres URL while using SQLAlchemy's async driver."""
+        if not isinstance(value, str):
+            return value
+        value = value.strip()
+        if value.startswith("postgres://"):
+            return "postgresql+asyncpg://" + value[len("postgres://"):]
+        if value.startswith("postgresql://"):
+            return "postgresql+asyncpg://" + value[len("postgresql://"):]
+        return value
+
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 
@@ -113,6 +126,13 @@ class Settings(BaseSettings):
             )
         if self.environment.lower() in {"prod", "production"} and "*" in self.allowed_hosts:
             raise ValueError("ALLOWED_HOSTS must be explicit in production.")
+        if self.environment.lower() in {"prod", "production"} and not self.database_url.startswith(
+            "postgresql+asyncpg://"
+        ):
+            raise ValueError(
+                "DATABASE_URL must point to PostgreSQL in production. "
+                "Use the Render Postgres internal connection string."
+            )
         if self.email_verification_bypass and self.environment.lower() in {"prod", "production"}:
             raise ValueError(
                 "EMAIL_VERIFICATION_BYPASS must be disabled in production. "
