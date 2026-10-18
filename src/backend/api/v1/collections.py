@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from backend.core.deps import AuthenticatedUserContext, get_current_user_claims, require_analyst
 from backend.core.rate_limit import DistributedRateLimiter
+from backend.core.exceptions import RateLimitException
 from backend.db.session import get_db
 from backend.models.competitor import (
     OfferingMatchModel,
@@ -606,6 +607,12 @@ async def run_collection(
     # ---------------------------------------------------------
     # Unexpected application/database error
     # ---------------------------------------------------------
+
+    except RateLimitException:
+        # A throttled collection is a client-visible 429, not a failed
+        # collection job/502. Roll back the provisional job written above.
+        await session.rollback()
+        raise
 
     except HTTPException:
         raise
