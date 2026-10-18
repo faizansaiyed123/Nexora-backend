@@ -11,6 +11,12 @@ __pycache__/
 .env.*
 !.env.example
 
+# Database
+*.db
+database.db
+*.sqlite
+*.sqlite3
+
 # Testing / coverage
 .pytest_cache/
 .coverage
@@ -37,3 +43,7 @@ dist/
 *.log
 tmp/
 temp/
+
+# Test scripts
+test_*.py
+!test_collection.py

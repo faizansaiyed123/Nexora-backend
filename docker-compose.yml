@@ -1,85 +1,28 @@
+version: "3.9"
+
 services:
-  postgres:
-    image: postgres:18
-    container_name: nexora-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: nexora
-    ports:
-      - "5433:5432"
-    volumes:
-      - postgres_postgres_data:/var/lib/postgresql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d nexora"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  redis:
-    image: redis:7.4.11-alpine
-    container_name: nexora-redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
   backend:
-    build: .
-    container_name: nexora-backend
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/nexora
-      REDIS_URL: redis://redis:6379/0
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in your environment or .env}
-      ENVIRONMENT: development
-      CORS_ORIGINS: '["http://localhost:5173","http://localhost:3000"]'
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
       - "8000:8000"
-    healthcheck:
-      test:
-        ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/health', timeout=2)\""]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
-  worker:
-    build: .
-    container_name: nexora-worker
-    restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/nexora
-      REDIS_URL: redis://redis:6379/0
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in your environment or .env}
-      ENVIRONMENT: development
-    command: ["celery", "-A", "backend.workers.celery_app.celery_app", "worker", "--loglevel=INFO"]
-    depends_on:
-      backend:
-        condition: service_healthy
-
-  beat:
-    build: .
-    container_name: nexora-beat
+      - DATABASE_URL=sqlite+aiosqlite:///app/database.db
+      - ENVIRONMENT=production
+      - AUTO_RENDER_ENABLED=true
+      - CORS_ORIGINS=http://localhost:5173
+    volumes:
+      - ./database.db:/app/database.db
     restart: unless-stopped
-    environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/nexora
-      REDIS_URL: redis://redis:6379/0
-      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in your environment or .env}
-      ENVIRONMENT: development
-    command: ["celery", "-A", "backend.workers.celery_app.celery_app", "beat", "--loglevel=INFO"]
-    depends_on:
-      backend:
-        condition: service_healthy
 
-volumes:
-  postgres_postgres_data:
+  frontend:
+    image: nginx:alpine
+    ports:
+      - "5173:80"
+    volumes:
+      - ../Nexora-Frontend/dist:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+    restart: unless-stopped

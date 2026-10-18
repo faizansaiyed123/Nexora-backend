@@ -44,6 +44,8 @@ def _fallback_check(key: str, max_requests: int, window_seconds: int) -> None:
 
 async def get_redis_client():
     global _redis_client
+    if not settings.redis_url:
+        return None
     if _redis_client is None:
         try:
             import redis.asyncio as aioredis
@@ -177,8 +179,8 @@ class TokenSessionStore:
         try:
             await redis.setex(f"refresh:{user_id}:{session_id}", ttl_seconds, token_hash)
         except Exception as e:
-            logger.error(f"Failed to store refresh session: {e}")
-            raise
+            logger.warning(f"Could not persist refresh session in Redis: {e}; continuing in stateless mode.")
+            return
 
     @classmethod
     async def validate_and_rotate_refresh_session(
