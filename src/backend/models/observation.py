@@ -19,7 +19,7 @@ from sqlalchemy import (
     Text,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSON, UUID
+from sqlalchemy.dialects.postgresql import JSON, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.db.base import Base
@@ -69,7 +69,7 @@ class JobModel(Base):
         nullable=True,
     )
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    meta_info: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    meta_info: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -80,6 +80,7 @@ class JobModel(Base):
         Index(
             "idx_jobs_meta_info",
             "meta_info",
+            postgresql_using="gin",
         ),
     )
 

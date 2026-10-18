@@ -23,7 +23,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSON, UUID
+from sqlalchemy.dialects.postgresql import JSON, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.db.base import Base
@@ -244,7 +244,7 @@ class OfferingModel(Base):
 
     # Dynamic JSON attributes (Sanitized & vertical-agnostic)
     attributes: Mapped[Dict[str, Any]] = mapped_column(
-        JSON,
+        JSONB,
         default=dict,
         nullable=False,
     )
