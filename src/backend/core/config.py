@@ -1,6 +1,6 @@
 from functools import lru_cache
-from typing import List
-from pydantic import model_validator
+from typing import Any, List
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -43,6 +43,25 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
     ]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _parse_list_fields(cls, data: Any) -> Any:
+        """Accept comma-separated strings for list fields from env vars."""
+        if isinstance(data, dict):
+            for key in ("cors_origins", "allowed_hosts"):
+                raw = data.get(key)
+                if isinstance(raw, str):
+                    data[key] = [s.strip() for s in raw.split(",") if s.strip()]
+        return data
+
+    @field_validator("cors_origins", "allowed_hosts", mode="before")
+    @classmethod
+    def _coerce_list(cls, value: Any) -> Any:
+        """Accept comma-separated string from env var."""
+        if isinstance(value, str):
+            return [s.strip() for s in value.split(",") if s.strip()]
+        return value
 
     # Disposable Email Blocking
     block_disposable_emails: bool = True
