@@ -9,9 +9,6 @@ COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 COPY alembic.ini ./
 COPY alembic ./alembic
-COPY .env.example .env
-COPY init_db.py ./
-COPY render.yaml ./
 
 RUN uv sync --frozen --no-dev --python 3.12
 RUN .venv/bin/playwright install --with-deps chromium
@@ -22,4 +19,5 @@ RUN chown -R nexora:nexora /app /home/nexora
 USER nexora
 EXPOSE 8000
 
-CMD ["sh","-c","/app/.venv/bin/alembic upgrade head || true && /app/.venv/bin/python /app/init_db.py && /app/.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8000"]
+# Apply schema migrations strictly; never drop production tables during startup.
+CMD ["sh", "-c", "/app/.venv/bin/alembic upgrade head && exec /app/.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port \"${PORT:-8000}\""]
