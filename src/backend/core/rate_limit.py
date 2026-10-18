@@ -6,6 +6,7 @@ Rate limiting uses an atomic Redis fixed window and a process-local fallback whe
 
 import logging
 import time
+import math
 import threading
 from typing import Optional
 from backend.core.config import get_settings
@@ -35,10 +36,11 @@ def _fallback_check(key: str, max_requests: int, window_seconds: int) -> None:
         count += 1
         _fallback_counts[key] = (count, window_start)
         if count > max_requests:
-            retry_after = max(1, int(window_seconds - (now - window_start)))
+            retry_after = max(1, math.ceil(window_seconds - (now - window_start)))
             raise RateLimitException(
                 message=f"Rate limit exceeded. Please try again in {retry_after} seconds.",
                 code="RATE_LIMIT_EXCEEDED",
+                retry_after_seconds=retry_after,
             )
 
 
@@ -88,10 +90,11 @@ class DistributedRateLimiter:
                 window_seconds,
             )
             if int(current_count) > max_requests:
-                ttl = await redis.ttl(key)
+                ttl = max(int(await redis.ttl(key)), 1)
                 raise RateLimitException(
-                    message=f"Rate limit exceeded. Please try again in {max(ttl, 1)} seconds.",
+                    message=f"Rate limit exceeded. Please try again in {ttl} seconds.",
                     code="RATE_LIMIT_EXCEEDED",
+                    retry_after_seconds=ttl,
                 )
         except RateLimitException:
             raise
