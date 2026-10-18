@@ -101,19 +101,6 @@ class AuthService:
 
         skip_email_verification = get_settings().email_verification_bypass
 
-        # When Redis is unavailable, email verification tokens cannot be
-        # stored or retrieved. Bypass verification entirely so users are not
-        # permanently locked out of the serverless / SQLite-only deployment.
-        from backend.core.rate_limit import get_redis_client
-        try:
-            _redis = await get_redis_client()
-            redis_available = _redis is not None
-        except Exception:
-            redis_available = False
-
-        if not redis_available:
-            skip_email_verification = True
-
         user = UserModel(
             client_id=client.id,
             email=clean_email,
@@ -238,43 +225,32 @@ class AuthService:
             token_hash
         )
 
-        user = None
-        if payload:
-            user_id = payload.get("user_id")
-            try:
-                user_uuid = uuid.UUID(user_id)
-            except (ValueError, TypeError):
-                raise ValidationException(
-                    "Invalid email verification token.",
-                    code="INVALID_VERIFICATION_TOKEN",
-                )
-            result = await session.execute(
-                select(UserModel).where(UserModel.id == user_uuid)
+        if not payload:
+            raise ValidationException(
+                "Invalid or expired email verification token.",
+                code="INVALID_VERIFICATION_TOKEN",
             )
-            user = result.scalar_one_or_none()
-            if not user:
-                raise NotFoundException(
-                    "User not found.",
-                    code="USER_NOT_FOUND",
-                )
-        else:
-            # Redis unavailable or token expired: fall back to verifying the
-            # most recent unverified account by email. This keeps the
-            # serverless/SQLite-only deployment usable without Redis.
-            result = await session.execute(
-                select(UserModel).where(
-                    UserModel.email_verified.is_(False),
-                    UserModel.is_active.is_(True),
-                )
-                .order_by(UserModel.created_at.desc())
-                .limit(1)
+
+        user_id = payload.get("user_id")
+
+        try:
+            user_uuid = uuid.UUID(user_id)
+        except (ValueError, TypeError):
+            raise ValidationException(
+                "Invalid email verification token.",
+                code="INVALID_VERIFICATION_TOKEN",
             )
-            user = result.scalar_one_or_none()
-            if not user:
-                raise ValidationException(
-                    "Invalid or expired email verification token.",
-                    code="INVALID_VERIFICATION_TOKEN",
-                )
+
+        result = await session.execute(
+            select(UserModel).where(UserModel.id == user_uuid)
+        )
+        user = result.scalar_one_or_none()
+
+        if not user:
+            raise NotFoundException(
+                "User not found.",
+                code="USER_NOT_FOUND",
+            )
 
         if user.email_verified:
             return
