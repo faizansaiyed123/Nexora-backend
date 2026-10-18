@@ -85,6 +85,7 @@ async def unhandled_exception_handler(
     )
 
 
+
 # Include each router directly with /v1 prefix
 app.include_router(health_router, prefix="/v1")
 app.include_router(auth_router, prefix="/v1")

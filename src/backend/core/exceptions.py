@@ -89,15 +89,17 @@ class ValidationException(AppException):
 
 
 class RateLimitException(AppException):
-    """Raised when rate limit is exceeded."""
+    """Raised when rate limit is exceeded, including the server-calculated retry delay."""
 
     def __init__(
         self,
         message: str = "Too many requests. Please try again later.",
         code: str = "RATE_LIMIT_EXCEEDED",
+        retry_after_seconds: int = 60,
     ) -> None:
         super().__init__(
             message=message,
             code=code,
             status_code=429,
         )
+        self.retry_after_seconds = max(1, int(retry_after_seconds))
