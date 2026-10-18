@@ -88,11 +88,12 @@ class Settings(BaseSettings):
     smtp_from_name: str = "Nexora"
     frontend_url: str = "http://localhost:5173"
 
-    # Local/staging escape hatch for environments without a working SMTP relay.
-    # When true, registration marks the new admin as already verified, does not
-    # mint a verification token, and does not attempt to send mail. Never enable
-    # this in production: it removes proof of email ownership from signup.
+    # Temporary escape hatch for environments without a working email relay.
+    # When true, registration marks new accounts as verified and skips verification mail.
     email_verification_bypass: bool = False
+    # Production requires this second, explicit opt-in before bypass can be enabled.
+    # Keep false after email delivery is repaired.
+    allow_production_email_verification_bypass: bool = False
 
     # Gemini discovery fallback. Discovery continues with deterministic extraction
     # when this key is not configured.
@@ -133,10 +134,14 @@ class Settings(BaseSettings):
                 "DATABASE_URL must point to PostgreSQL in production. "
                 "Use the Render Postgres internal connection string."
             )
-        if self.email_verification_bypass and self.environment.lower() in {"prod", "production"}:
+        if (
+            self.email_verification_bypass
+            and self.environment.lower() in {"prod", "production"}
+            and not self.allow_production_email_verification_bypass
+        ):
             raise ValueError(
-                "EMAIL_VERIFICATION_BYPASS must be disabled in production. "
-                "Signup would accept unverified email addresses."
+                "Production email verification bypass requires "
+                "ALLOW_PRODUCTION_EMAIL_VERIFICATION_BYPASS=true."
             )
         return self
 
