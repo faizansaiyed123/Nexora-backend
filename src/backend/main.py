@@ -16,7 +16,6 @@ from backend.api.v1.jobs import router as jobs_router
 from backend.api.v1.alerts import router as alerts_router
 from backend.core.config import get_settings
 from backend.core.exceptions import AppException
-from backend.core.one_time_maintenance import purge_public_application_data_once
 from backend.services.url_security import SecurityValidationError
 
 logger = logging.getLogger(__name__)
@@ -86,13 +85,6 @@ async def unhandled_exception_handler(
     )
 
 
-
-
-@app.on_event("startup")
-async def _run_guarded_one_time_database_maintenance() -> None:
-    # Dormant unless the explicit one-time flag and database-name confirmation
-    # are set in the Render environment. This hook is removed after this reset.
-    await purge_public_application_data_once()
 
 # Include each router directly with /v1 prefix
 app.include_router(health_router, prefix="/v1")
