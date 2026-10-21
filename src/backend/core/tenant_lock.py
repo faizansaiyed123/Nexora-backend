@@ -40,5 +40,4 @@ async def acquire_tenant_lock(db: AsyncSession, client_id: UUID, namespace: str)
         )
         await db.flush()
     except Exception:
-        # Fallback for SQLite / non-PostgreSQL engines.
         _acquire_local_lock(key)

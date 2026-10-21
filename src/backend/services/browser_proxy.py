@@ -107,12 +107,8 @@ class SafeBrowserProxy:
             method, target, version = parts
             if method.upper() == "CONNECT":
                 host, port = self._parse_connect_target(target)
-                # Validate the destination hostname before we tunnel anywhere.
                 pinned_ip = await _resolve_and_validate_host_async(host, port)
                 if self._upstream_host and self._upstream_port:
-                    # Tunnel through the configured residential proxy instead of
-                    # connecting directly to the pinned IP. The pinned IP is
-                    # still computed so SSRF validation cannot be bypassed.
                     upstream_reader, upstream_writer = await asyncio.wait_for(
                         asyncio.open_connection(self._upstream_host, self._upstream_port),
                         timeout=_CONNECT_TIMEOUT,

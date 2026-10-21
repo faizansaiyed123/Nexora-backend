@@ -41,7 +41,6 @@ class OfferingMatchService:
         to the authenticated client.
         """
 
-        # Verify offering belongs to this client.
         offering_result = await db.execute(
             select(OfferingModel).where(
                 OfferingModel.id == data.offering_id,
@@ -54,7 +53,6 @@ class OfferingMatchService:
         if not offering:
             raise ValueError("Offering not found.")
 
-        # Verify source belongs to a competitor owned by this client.
         source_result = await db.execute(
             select(SourceModel)
             .join(
@@ -74,7 +72,6 @@ class OfferingMatchService:
 
         safe_target_url = UrlSecurityService.validate_url(str(data.target_url))
 
-        # Check duplicate match.
         existing_result = await db.execute(
             select(OfferingMatchModel).where(
                 OfferingMatchModel.offering_id == data.offering_id,

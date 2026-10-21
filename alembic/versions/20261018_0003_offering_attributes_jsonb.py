@@ -53,6 +53,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Keep JSONB and its index on downgrade: converting back to JSON would
-    # make the GIN index invalid and can break existing query behavior.
     pass

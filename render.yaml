@@ -1,5 +1,3 @@
-# Render Blueprint for Nexora Backend
-# The live service uses Dockerfile; keep Blueprint settings aligned with it.
 databases:
   - name: nexora-db
     databaseName: nexora

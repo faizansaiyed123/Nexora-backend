@@ -62,9 +62,6 @@ async def run_collection(
         8. Return detailed response.
     """
 
-    # =========================================================
-    # 1. FIND OFFERING MATCH
-    # =========================================================
 
     result = await session.execute(
         select(OfferingMatchModel)
@@ -122,9 +119,6 @@ async def run_collection(
         else None
     )
 
-    # =========================================================
-    # 2. CREATE JOB
-    # =========================================================
 
     job = JobModel(
         source_id=source_id_val,
@@ -149,9 +143,6 @@ async def run_collection(
 
     await session.flush()
 
-    # =========================================================
-    # 3. COLLECTION
-    # =========================================================
 
     try:
 
@@ -163,9 +154,6 @@ async def run_collection(
             )
         )
 
-        # =====================================================
-        # 4. NORMALIZE AVAILABILITY
-        # =====================================================
 
         availability_value = (
             collection_result.availability
@@ -186,9 +174,6 @@ async def run_collection(
                 AvailabilityStatusEnum.UNKNOWN
             )
 
-        # =====================================================
-        # 5. CREATE OBSERVATION
-        # =====================================================
 
         observation = ObservationModel(
             offering_match_id=(
@@ -217,11 +202,6 @@ async def run_collection(
                 or 0
             ),
 
-            # Keep this if your DB column is intended
-            # to store raw response data.
-            #
-            # If you don't want to store full HTML,
-            # change this back to None.
             raw_payload=(
                 collection_result.raw_payload
             ),
@@ -237,9 +217,6 @@ async def run_collection(
 
         await session.flush()
 
-        # =====================================================
-        # 6. FIND SNAPSHOT
-        # =====================================================
 
         snapshot_result = await session.execute(
             select(SnapshotModel).where(
@@ -252,9 +229,6 @@ async def run_collection(
             snapshot_result.scalar_one_or_none()
         )
 
-        # =====================================================
-        # 7. SNAPSHOT
-        # =====================================================
 
         price_movement = (
             "FIRST_OBSERVATION"
@@ -380,9 +354,6 @@ async def run_collection(
                 observation.observed_at
             )
 
-        # =====================================================
-        # 8. COMPETITIVE COMPARISON
-        # =====================================================
 
         client_price_info = None
 
@@ -459,9 +430,6 @@ async def run_collection(
                 "position": position,
             }
 
-        # =====================================================
-        # 9. UPDATE JOB
-        # =====================================================
 
         if collection_result.success:
 
@@ -491,9 +459,6 @@ async def run_collection(
                 or "Collection failed."
             )
 
-        # =====================================================
-        # 10. COMMIT
-        # =====================================================
 
         await session.commit()
 
@@ -501,9 +466,6 @@ async def run_collection(
             job
         )
 
-        # =====================================================
-        # 11. FAILED COLLECTION
-        # =====================================================
 
         if not collection_result.success:
 
@@ -531,9 +493,6 @@ async def run_collection(
                 },
             )
 
-        # =====================================================
-        # 12. CONFIDENCE
-        # =====================================================
 
         if (
             collection_result.price is not None
@@ -555,9 +514,6 @@ async def run_collection(
 
             confidence = "LOW"
 
-        # =====================================================
-        # 13. FINAL RESPONSE
-        # =====================================================
 
         return {
             "job_id": str(
@@ -612,9 +568,6 @@ async def run_collection(
                 "Collection completed successfully."
             ),
 
-            # -------------------------------------------------
-            # Collection diagnostics
-            # -------------------------------------------------
 
             "collection": {
                 "success": (
@@ -646,9 +599,6 @@ async def run_collection(
                 ),
             },
 
-            # -------------------------------------------------
-            # Observation
-            # -------------------------------------------------
 
             "observation": {
                 "price": (
@@ -692,9 +642,6 @@ async def run_collection(
                 ),
             },
 
-            # -------------------------------------------------
-            # Snapshot
-            # -------------------------------------------------
 
             "snapshot": {
                 "current_price": (
@@ -742,18 +689,12 @@ async def run_collection(
                 ),
             },
 
-            # -------------------------------------------------
-            # Competitive comparison
-            # -------------------------------------------------
 
             "competitive_comparison": (
                 client_price_info
             ),
         }
 
-    # =========================================================
-    # UNEXPECTED APPLICATION / DB ERROR
-    # =========================================================
 
     except HTTPException:
         raise

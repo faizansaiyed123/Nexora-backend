@@ -6,7 +6,6 @@ from backend.db.session import get_db
 
 async def main():
     async for session in get_db():
-        # Drop the problematic unique index
         try:
             await session.execute(text("DROP INDEX IF EXISTS uq_jobs_active_scheduled_match"))
             await session.commit()
@@ -14,7 +13,6 @@ async def main():
         except Exception as e:
             print(f"Could not drop index: {e}")
         
-        # Clean up stale RUNNING jobs
         result = await session.execute(
             text(
                 "DELETE FROM jobs WHERE status = 'RUNNING'"

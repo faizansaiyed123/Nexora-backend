@@ -48,9 +48,6 @@ from backend.services.offering_service import OfferingService
 router = APIRouter(prefix="/offerings", tags=["Offerings"])
 
 
-# ============================================================================
-# Dynamic Field Definitions Management
-# ============================================================================
 
 @router.get(
     "/fields",
@@ -131,9 +128,6 @@ async def delete_dynamic_field(
     return None
 
 
-# ============================================================================
-# Bulk Operations & Catalog Export
-# ============================================================================
 
 @router.post(
     "/bulk",
@@ -229,9 +223,6 @@ async def export_catalog(
     )
 
 
-# ============================================================================
-# Core Offering CRUD & Monitoring
-# ============================================================================
 
 @router.post(
     "",

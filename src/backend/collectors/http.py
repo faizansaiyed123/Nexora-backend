@@ -44,7 +44,6 @@ class HTTPCollector(BaseCollector):
             "Accept-Language": "en-US,en;q=0.9",
         }
 
-        # Source-specific headers override defaults.
         headers.update(request.headers)
 
         try:

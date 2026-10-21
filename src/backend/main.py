@@ -28,10 +28,6 @@ app = FastAPI(
     description="Backend API for Nexora competitive price intelligence.",
 )
 
-# app.add_middleware(
-#     TrustedHostMiddleware,
-#     allowed_hosts=settings.allowed_hosts,
-# )
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,

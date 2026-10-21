@@ -82,9 +82,9 @@ class CollectionMethodEnum(str, Enum):
 
 
 class CircuitStateEnum(str, Enum):
-    CLOSED = "CLOSED"         # Normal operation: all traffic allowed
-    OPEN = "OPEN"             # Tripped: collection suspended to protect targets
-    HALF_OPEN = "HALF_OPEN"   # Probing: test single request before reopening
+    CLOSED = "CLOSED"
+    OPEN = "OPEN"
+    HALF_OPEN = "HALF_OPEN"
 
 
 class JobTypeEnum(str, Enum):

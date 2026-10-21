@@ -26,9 +26,6 @@ from backend.models.enums import (
 )
 
 
-# ============================================================================
-# Dynamic Field Definition Schemas
-# ============================================================================
 
 class DynamicFieldDefinitionBase(BaseModel):
     field_name: str = Field(
@@ -166,9 +163,6 @@ class DynamicFieldDefinitionRead(DynamicFieldDefinitionBase):
     )
 
 
-# ============================================================================
-# Competitor Match Enrichment Schemas
-# ============================================================================
 
 class CompetitorMatchSummary(BaseModel):
     match_id: uuid.UUID
@@ -188,9 +182,6 @@ class CompetitorMatchSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-# ============================================================================
-# Core Offering Schemas
-# ============================================================================
 
 class OfferingBase(BaseModel):
     """
@@ -331,7 +322,6 @@ class OfferingCreate(OfferingBase):
     Schema for single or bulk offering creation.
     Includes backward-compatible alias mappings for base_price, source_url, dynamic_attributes.
     """
-    # Optional legacy alias helpers that route to canonical fields
     base_price: Optional[Decimal] = None
     source_url: Optional[str] = None
     dynamic_attributes: Optional[Dict[str, Any]] = None
@@ -342,7 +332,6 @@ class OfferingCreate(OfferingBase):
     @classmethod
     def remap_legacy_fields(cls, data: Any) -> Any:
         if isinstance(data, dict):
-            # Remap legacy names if canonical is not supplied
             if "base_price" in data and "current_price" not in data:
                 data["current_price"] = data["base_price"]
             if "source_url" in data and "url" not in data:
@@ -350,7 +339,6 @@ class OfferingCreate(OfferingBase):
             if "dynamic_attributes" in data and "attributes" not in data:
                 data["attributes"] = data["dynamic_attributes"]
             
-            # If identifiers / meta_info provided, merge into attributes dict cleanly
             attrs = data.get("attributes") or {}
             if not isinstance(attrs, dict):
                 attrs = {}
@@ -444,7 +432,6 @@ class OfferingUpdate(BaseModel):
     is_monitored: Optional[bool] = None
     is_archived: Optional[bool] = None
 
-    # Legacy aliases
     base_price: Optional[Decimal] = None
     source_url: Optional[str] = None
     dynamic_attributes: Optional[Dict[str, Any]] = None
@@ -509,13 +496,11 @@ class OfferingRead(OfferingBase):
     created_at: datetime
     updated_at: datetime
 
-    # Competitor intelligence summary metrics
     competitor_matches_count: int = 0
     min_competitor_price: Optional[Decimal] = None
     avg_competitor_price: Optional[Decimal] = None
     price_delta_percent: Optional[Decimal] = None
 
-    # Backward compatibility properties
     @computed_field
     @property
     def base_price(self) -> Optional[Decimal]:
@@ -616,9 +601,6 @@ class OfferingDetailRead(OfferingRead):
     )
 
 
-# ============================================================================
-# Pagination & Bulk Ingestion Schemas
-# ============================================================================
 
 class OfferingPaginationResponse(BaseModel):
     items: List[OfferingRead]

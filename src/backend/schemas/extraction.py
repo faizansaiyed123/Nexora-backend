@@ -94,7 +94,6 @@ class CollectionResult(BaseModel):
     observation_id: Optional[UUID] = None
     snapshot_id: Optional[UUID] = None
 
-    # Backwards-compatible aliases.
     @property
     def status_code(self) -> Optional[int]:
         return self.http_status_code

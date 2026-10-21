@@ -121,13 +121,11 @@ class DynamicFieldDefinitionModel(Base):
         nullable=False,
     )
 
-    # Relationships
     client: Mapped["ClientModel"] = relationship(
         "ClientModel",
         back_populates="dynamic_fields",
     )
 
-    # Backward-compatible property aliases
     @property
     def display_label(self) -> str:
         return self.display_name
@@ -174,7 +172,6 @@ class OfferingModel(Base):
         index=True,
     )
 
-    # Core identity
     name: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
@@ -203,7 +200,6 @@ class OfferingModel(Base):
         index=True,
     )
 
-    # Monetary value (Exact Decimal precision)
     current_price: Mapped[Optional[Decimal]] = mapped_column(
         Numeric(12, 4),
         nullable=True,
@@ -220,7 +216,6 @@ class OfferingModel(Base):
         nullable=False,
     )
 
-    # URLs & Images
     url: Mapped[Optional[str]] = mapped_column(
         Text,
         nullable=True,
@@ -242,14 +237,12 @@ class OfferingModel(Base):
         nullable=True,
     )
 
-    # Dynamic JSON attributes (Sanitized & vertical-agnostic)
     attributes: Mapped[Dict[str, Any]] = mapped_column(
         JSONB,
         default=dict,
         nullable=False,
     )
 
-    # Lifecycle & Monitoring flags
     is_archived: Mapped[bool] = mapped_column(
         Boolean,
         default=False,
@@ -274,7 +267,6 @@ class OfferingModel(Base):
         nullable=False,
     )
 
-    # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -288,7 +280,6 @@ class OfferingModel(Base):
         nullable=False,
     )
 
-    # Relationships
     client: Mapped["ClientModel"] = relationship(
         "ClientModel",
         back_populates="offerings",
@@ -300,7 +291,6 @@ class OfferingModel(Base):
         cascade="all, delete-orphan",
     )
 
-    # Backward-compatible property aliases
     @property
     def base_price(self) -> Optional[Decimal]:
         return self.current_price
@@ -363,7 +353,6 @@ class OfferingModel(Base):
     def is_active(self, val: bool) -> None:
         self.is_archived = not val
 
-    # Indexes
     __table_args__ = (
         Index(
             "idx_offerings_client_archived_type",

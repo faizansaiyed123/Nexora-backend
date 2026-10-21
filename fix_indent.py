@@ -2,7 +2,6 @@
 with open("src/backend/api/v1/collections.py", "r") as f:
     lines = f.readlines()
 
-# Fix lines 130-149 (indices 129-148)
 fixed_lines = [
     "    # ---------------------------------------------------------\n",
     "    # 2. Create collection job\n",
@@ -27,7 +26,6 @@ fixed_lines = [
     "\n",
 ]
 
-# Replace lines 130-149 (indices 129-148) with fixed lines
 lines[129:149] = fixed_lines
 
 with open("src/backend/api/v1/collections.py", "w") as f:

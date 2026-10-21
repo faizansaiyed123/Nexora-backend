@@ -76,10 +76,8 @@ from backend.schemas.offering import (
 )
 
 __all__ = [
-    # Errors
     "ErrorDetail",
     "ErrorResponse",
-    # Client & Auth
     "ClientCreate",
     "ClientUpdate",
     "ClientRead",
@@ -98,7 +96,6 @@ __all__ = [
     "ResendVerificationRequest",
     "MessageResponse",
     "CurrentUserResponse",
-    # Offering Catalog
     "DynamicFieldDefinitionCreate",
     "DynamicFieldDefinitionRead",
     "OfferingCreate",
@@ -113,7 +110,6 @@ __all__ = [
     "BulkOfferingArchiveResponse",
     "ToggleMonitoringResponse",
     "CompetitorMatchSummary",
-    # Competitor & Sources
     "CompetitorCreate",
     "CompetitorUpdate",
     "CompetitorRead",
@@ -126,7 +122,6 @@ __all__ = [
     "OfferingMatchCreate",
     "OfferingMatchUpdate",
     "OfferingMatchRead",
-    # Observation & Ingestion
     "JobCreate",
     "JobRead",
     "ObservationIngest",
@@ -134,11 +129,9 @@ __all__ = [
     "SnapshotRead",
     "PriceHistoryPoint",
     "PriceTrendResponse",
-    # Discovery
     "DiscoveryRunRequest",
     "DiscoveryJobResponse",
     "DiscoveredItemSummary",
-    # Alerts & Audit
     "AlertRuleCreate",
     "AlertRuleUpdate",
     "AlertRuleRead",

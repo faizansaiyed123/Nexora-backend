@@ -40,8 +40,6 @@ class PinnedDNSBackend(httpcore.AsyncNetworkBackend):
         except SecurityValidationError:
             raise
 
-        # The origin hostname is retained by httpcore for TLS SNI/certificate
-        # verification. Only the actual TCP destination is replaced.
         return await self._backend.connect_tcp(
             pinned_ip,
             port,

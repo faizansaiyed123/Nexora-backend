@@ -11,35 +11,31 @@ import socket
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-# Private, Loopback, Link-Local, and Cloud Metadata Networks to strictly block
 BLOCKED_IP_NETWORKS = [
-    ipaddress.ip_network("0.0.0.0/8"),          # Current network
-    ipaddress.ip_network("10.0.0.0/8"),         # RFC 1918 Private Class A
-    ipaddress.ip_network("127.0.0.0/8"),        # Loopback
-    ipaddress.ip_network("169.254.0.0/16"),     # Link-Local / Cloud Metadata (169.254.169.254)
+    ipaddress.ip_network("0.0.0.0/8"),        
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"), 
     ipaddress.ip_network("172.16.0.0/12"),      # RFC 1918 Private Class B
     ipaddress.ip_network("192.168.0.0/16"),     # RFC 1918 Private Class C
-    ipaddress.ip_network("192.0.2.0/24"),       # TEST-NET-1
-    ipaddress.ip_network("198.51.100.0/24"),    # TEST-NET-2
-    ipaddress.ip_network("203.0.113.0/24"),     # TEST-NET-3
-    ipaddress.ip_network("224.0.0.0/4"),        # Multicast
-    ipaddress.ip_network("240.0.0.0/4"),        # Reserved
-    ipaddress.ip_network("::1/128"),            # IPv6 Loopback
-    ipaddress.ip_network("fc00::/7"),           # IPv6 Unique Local Address
-    ipaddress.ip_network("fe80::/10"),          # IPv6 Link-Local
-    ipaddress.ip_network("100.64.0.0/10"),      # Carrier-grade NAT (RFC 6598)
-    ipaddress.ip_network("198.18.0.0/15"),      # Benchmarking (RFC 2544)
-    ipaddress.ip_network("192.0.0.0/24"),       # IETF protocol assignments
+    ipaddress.ip_network("192.0.2.0/24"),   
+    ipaddress.ip_network("198.51.100.0/24"),
+    ipaddress.ip_network("203.0.113.0/24"), 
+    ipaddress.ip_network("224.0.0.0/4"),
+    ipaddress.ip_network("240.0.0.0/4"),
+    ipaddress.ip_network("::1/128"),    
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"), 
+    ipaddress.ip_network("100.64.0.0/10"),  
+    ipaddress.ip_network("198.18.0.0/15"),  
+    ipaddress.ip_network("192.0.0.0/24"),   
     ipaddress.ip_network("64:ff9b::/96"),       # NAT64 (can embed private IPv4)
 ]
 
-# Tracking query parameters to strip during canonicalization
 TRACKING_PARAM_PREFIXES = ("utm_", "fbclid", "gclid", "msclkid", "mc_eid", "yclid", "_ga", "_gl")
 
-# Attribute key name safety: alphanumeric with underscores or dashes
 ATTR_KEY_REGEX = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
-# Suspicious / malicious HTML script tag patterns for stored XSS prevention
 HTML_SCRIPT_PATTERN = re.compile(r"<[^>]*script[^>]*>|javascript:|data:text/html", re.IGNORECASE)
 
 
@@ -107,7 +103,6 @@ class UrlSecurityService:
 
         clean_url = url.strip()
 
-        # Reject explicitly dangerous non-HTTP URI schemes
         lowered_raw = clean_url.lower()
         if lowered_raw.startswith(("file:", "ftp:", "gopher:", "data:", "javascript:", "blob:", "about:", "ws:", "wss:")):
             raise SecurityValidationError("Invalid URL protocol. Only HTTP and HTTPS are permitted.")
@@ -121,7 +116,6 @@ class UrlSecurityService:
                 f"Invalid URL protocol '{parsed.scheme}'. Only HTTP and HTTPS are permitted."
             )
 
-        # Reject URLs containing username or password credentials
         if parsed.username or parsed.password:
             raise SecurityValidationError("URLs containing embedded username or password credentials are not permitted.")
 
@@ -129,7 +123,6 @@ class UrlSecurityService:
         if not hostname:
             raise SecurityValidationError("Invalid URL: Hostname is missing or malformed.")
 
-        # Disallow explicit localhost or metadata hostnames
         lowered_host = hostname.lower()
         if lowered_host in (
             "localhost",
@@ -141,7 +134,6 @@ class UrlSecurityService:
         ):
             raise SecurityValidationError("Access to local or cloud internal hosts is strictly forbidden.")
 
-        # Resolve hostname to verify against blocked CIDR blocks
         try:
             addr_info = socket.getaddrinfo(hostname, parsed.port or (443 if parsed.scheme == "https" else 80))
             for family, _, _, _, sockaddr in addr_info:
@@ -151,11 +143,9 @@ class UrlSecurityService:
                         f"Target host resolves to a restricted private or link-local address ({ip_str})."
                     )
         except socket.gaierror:
-            # If domain has valid TLD and syntax, check for suspicious internal suffixes
             if "." not in hostname or hostname.endswith((".local", ".internal", ".corp", ".lan", ".localhost")):
                 raise SecurityValidationError(f"Domain '{hostname}' is not a valid or resolvable public domain.")
 
-        # Canonicalize URL & strip tracking query parameters
         clean_query = cls._strip_tracking_params(parsed.query)
         canonical_parsed = parsed._replace(query=clean_query, fragment="")
         return urlunparse(canonical_parsed)

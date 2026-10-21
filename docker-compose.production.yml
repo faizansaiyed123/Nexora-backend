@@ -1,5 +1,3 @@
-# Production Compose: internal PostgreSQL/Redis, externally exposed API only.
-# Supply secrets and CORS/URL settings through the deployment environment.
 services:
   postgres:
     image: postgres:18.6-alpine

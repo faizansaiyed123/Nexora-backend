@@ -79,7 +79,6 @@ class ClientModel(Base):
         nullable=False,
     )
 
-    # Relationships
     users: Mapped[List["UserModel"]] = relationship(
         "UserModel", back_populates="client", cascade="all, delete-orphan"
     )
@@ -161,7 +160,6 @@ class UserModel(Base):
         nullable=False,
     )
 
-    # Relationship
     client: Mapped["ClientModel"] = relationship(
         "ClientModel",
         back_populates="users",

@@ -70,7 +70,6 @@ class CompetitorModel(Base):
         nullable=False,
     )
 
-    # Relationships
     client: Mapped["ClientModel"] = relationship("ClientModel", back_populates="competitors")
     sources: Mapped[List["SourceModel"]] = relationship(
         "SourceModel", back_populates="competitor", cascade="all, delete-orphan"
@@ -112,7 +111,6 @@ class SourceModel(Base):
         nullable=False,
     )
 
-    # Circuit Breaker state
     circuit_state: Mapped[CircuitStateEnum] = mapped_column(
         Enum(CircuitStateEnum, name="circuit_state_enum", native_enum=False),
         default=CircuitStateEnum.CLOSED,
@@ -140,7 +138,6 @@ class SourceModel(Base):
         nullable=False,
     )
 
-    # Relationships
     competitor: Mapped["CompetitorModel"] = relationship("CompetitorModel", back_populates="sources")
     configuration: Mapped[Optional["SourceConfigurationModel"]] = relationship(
         "SourceConfigurationModel", back_populates="source", uselist=False, cascade="all, delete-orphan"
@@ -180,7 +177,6 @@ class SourceConfigurationModel(Base):
         nullable=False,
     )
 
-    # Relationship
     source: Mapped["SourceModel"] = relationship("SourceModel", back_populates="configuration")
 
 
@@ -220,7 +216,6 @@ class OfferingMatchModel(Base):
         nullable=False,
     )
 
-    # Relationships
     offering: Mapped["OfferingModel"] = relationship("OfferingModel", back_populates="matches")
     source: Mapped["SourceModel"] = relationship("SourceModel", back_populates="matches")
     observations: Mapped[List["ObservationModel"]] = relationship(

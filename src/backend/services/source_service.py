@@ -38,7 +38,6 @@ class SourceService:
     ) -> SourceModel:
         """Create a source belonging to a competitor of the authenticated client."""
 
-        # Verify competitor belongs to this client.
         result = await db.execute(
             select(CompetitorModel).where(
                 CompetitorModel.id == data.competitor_id,
@@ -54,7 +53,6 @@ class SourceService:
                 code="COMPETITOR_NOT_FOUND",
             )
 
-        # Validate before persistence so collection can never target internal hosts.
         if data.collection_method not in {CollectionMethodEnum.HTTP_FAST, CollectionMethodEnum.PLAYWRIGHT_BROWSER}:
             raise ValidationException(
                 "This collection method is not available in the current runtime.",
@@ -62,7 +60,6 @@ class SourceService:
             )
         safe_base_url = UrlSecurityService.validate_url(data.base_url)
 
-        # Create source.
         source = SourceModel(
             competitor_id=data.competitor_id,
             name=data.name,
@@ -74,7 +71,6 @@ class SourceService:
         db.add(source)
         await db.flush()
 
-        # Create configuration if supplied.
         if data.configuration and data.configuration.requires_proxy:
             raise ValidationException(
                 "Proxy collection is not implemented in the current runtime.",
@@ -89,7 +85,6 @@ class SourceService:
 
         await db.commit()
 
-        # Re-query the source with configuration loaded.
         result = await db.execute(
             select(SourceModel)
             .options(
@@ -199,7 +194,6 @@ class SourceService:
 
         await db.commit()
 
-        # Re-query with configuration loaded.
         result = await db.execute(
             select(SourceModel)
             .options(
@@ -250,8 +244,6 @@ class SourceService:
         if not source:
             return None
 
-        # Because get_by_id() now uses selectinload(),
-        # source.configuration is already loaded.
         configuration = source.configuration
 
         if not configuration:

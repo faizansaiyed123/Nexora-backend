@@ -44,7 +44,6 @@ class AuditLogModel(Base):
         index=True,
     )
 
-    # Relationships
     client: Mapped["ClientModel"] = relationship("ClientModel")
     user: Mapped[Optional["UserModel"]] = relationship("UserModel")
 

@@ -13,7 +13,6 @@ class Settings(BaseSettings):
     environment: str = "development"
     debug: bool = False
 
-    # Database
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/nexora"
 
     @field_validator("database_url", mode="before")
@@ -29,11 +28,8 @@ class Settings(BaseSettings):
             return "postgresql+asyncpg://" + value[len("postgresql://"):]
         return value
 
-    # Redis
     redis_url: str = "redis://localhost:6379/0"
 
-    # JWT Authentication
-    # Required: no default, so the app refuses to start without a real secret.
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 15
@@ -41,14 +37,12 @@ class Settings(BaseSettings):
     verification_token_expire_hours: int = 24
     password_reset_token_expire_minutes: int = 15
 
-    # Rate Limiting
     rate_limit_enabled: bool = True
     rate_limit_login_per_minute: int = 5
     rate_limit_register_per_hour: int = 10
     rate_limit_forgot_password_per_hour: int = 3
     rate_limit_resend_verification_per_hour: int = 3
 
-    # Security & CORS
     allowed_hosts: List[str] = ["*"]
     cors_origins: List[str] = [
         "http://localhost:3000",
@@ -76,10 +70,8 @@ class Settings(BaseSettings):
             return [s.strip() for s in value.split(",") if s.strip()]
         return value
 
-    # Disposable Email Blocking
     block_disposable_emails: bool = True
 
-    # Email / SMTP
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
     smtp_username: str = ""
@@ -88,31 +80,16 @@ class Settings(BaseSettings):
     smtp_from_name: str = "Nexora"
     frontend_url: str = "http://localhost:5173"
 
-    # Temporary escape hatch for environments without a working email relay.
-    # When true, registration marks new accounts as verified and skips verification mail.
     email_verification_bypass: bool = False
-    # Production requires this second, explicit opt-in before bypass can be enabled.
-    # Keep false after email delivery is repaired.
     allow_production_email_verification_bypass: bool = False
 
-    # Gemini discovery fallback. Discovery continues with deterministic extraction
-    # when this key is not configured.
     gemini_api_key: str = ""
-    # Verified against the configured Gemini project on 2026-09-04. This remains
-    # overridable with GEMINI_MODEL for projects with different availability.
     gemini_model: str = "gemini-3.6-flash"
     gemini_discovery_enabled: bool = True
 
-    # Residential egress proxy for bot-protected sites (optional).
-    # Set to a full URL like https://user:pass@residential.proxy:8080 to
-    # tunnel Playwright traffic through a residential IP. SSRF validation is
-    # still performed on the destination hostname before the tunnel opens.
     residential_proxy_url: str = ""
-    # When true, Playwright is used as a best-effort fallback for any page that
-    # looks JS-rendered or that failed deterministic extraction.
     auto_render_enabled: bool = True
 
-    # Background monitoring schedule
     scheduled_collection_interval_minutes: int = 60
     job_lease_seconds: int = 3600
 

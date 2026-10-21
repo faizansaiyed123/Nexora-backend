@@ -30,7 +30,6 @@ from backend.schemas.extraction import CollectionResult
 
 logger = logging.getLogger("nexora.extractor")
 
-# Currency Symbol to ISO 4217 Mapping
 CURRENCY_SYMBOL_MAP: Dict[str, str] = {
     "$": "USD",
     "€": "EUR",
@@ -59,7 +58,6 @@ CURRENCY_SYMBOL_MAP: Dict[str, str] = {
     "ZAR": "ZAR"
 }
 
-# Standard Schema.org Availability mappings
 SCHEMA_AVAILABILITY_MAP: Dict[str, AvailabilityStatusEnum] = {
     "instock": AvailabilityStatusEnum.IN_STOCK,
     "http://schema.org/instock": AvailabilityStatusEnum.IN_STOCK,
@@ -119,7 +117,6 @@ class UniversalExtractor:
 
         trimmed = raw_text.strip()
 
-        # Check if raw response is pure JSON (e.g. from an API or microservice)
         if (trimmed.startswith("{") and trimmed.endswith("}")) or (trimmed.startswith("[") and trimmed.endswith("]")):
             try:
                 parsed_json = json.loads(trimmed)
@@ -130,25 +127,21 @@ class UniversalExtractor:
             except Exception as e:
                 logger.debug(f"Direct JSON parse attempt skipped: {e}")
 
-        # Tier 1: Extract and parse all Schema.org / JSON-LD blocks
         cls._extract_json_ld(raw_text, data)
         if data["price"] is not None and data["currency"] is not None:
             data["strategy_used"] = "JSON_LD_SCHEMA"
             return data
 
-        # Tier 2: Extract OpenGraph, Twitter Card & Semantic Meta Tags
         cls._extract_meta_tags(raw_text, data)
         if data["price"] is not None:
             data["strategy_used"] = "SEMANTIC_META_TAGS"
             return data
 
-        # Tier 3: Extract Embedded Framework / SPA State (e.g. __NEXT_DATA__, __NUXT__)
         cls._extract_embedded_framework_state(raw_text, data)
         if data["price"] is not None:
             data["strategy_used"] = "EMBEDDED_SPA_STATE"
             return data
 
-        # Tier 4: Generic Semantic HTML Microformats & Regex Heuristics
         cls._extract_semantic_html_heuristics(raw_text, data)
         if data["price"] is not None:
             data["strategy_used"] = "SEMANTIC_HTML_HEURISTICS"
@@ -256,7 +249,6 @@ class UniversalExtractor:
         if not isinstance(item, dict):
             return
 
-        # Handle @graph wrapper
         if "@graph" in item and isinstance(item["@graph"], list):
             for sub_item in item["@graph"]:
                 cls._process_json_ld_item(sub_item, out)
@@ -275,18 +267,15 @@ class UniversalExtractor:
         if not is_product and "offers" not in item:
             return
 
-        # Extract Name
         if not out["name"] and "name" in item:
             out["name"] = str(item["name"]).strip()
 
-        # Extract SKU / Identifiers
         if not out["sku"]:
             for key in ["sku", "gtin13", "gtin14", "gtin8", "gtin", "mpn", "productID"]:
                 if key in item and item[key]:
                     out["sku"] = str(item[key]).strip()
                     break
 
-        # Extract Brand
         if not out["brand"]:
             if "brand" in item:
                 if isinstance(item["brand"], dict) and "name" in item["brand"]:
@@ -294,12 +283,10 @@ class UniversalExtractor:
                 elif isinstance(item["brand"], str):
                     out["brand"] = item["brand"].strip()
 
-        # Extract Offers / Pricing
         offers = item.get("offers")
         if offers:
             cls._extract_from_offers_obj(offers, out)
 
-        # Direct price on root object if present
         if out["price"] is None and "price" in item:
             p, c = cls._normalize_price_and_currency(str(item["price"]), item.get("priceCurrency"))
             if p is not None:
@@ -338,12 +325,10 @@ class UniversalExtractor:
     @classmethod
     def _extract_meta_tags(cls, html_content: str, out: Dict[str, Any]) -> None:
         """Extracts OpenGraph, Twitter, and standard <meta> / <link> tags."""
-        # Meta tag regex
         meta_pattern = re.compile(
             r'<meta\s+[^>]*(?:name|property|itemprop)=["\']([^"\']+)["\'][^>]*content=["\']([^"\']*)["\']',
             re.IGNORECASE
         )
-        # Alternate attribute ordering: content before name/property
         meta_pattern_alt = re.compile(
             r'<meta\s+[^>]*content=["\']([^"\']*)["\'][^>]*(?:name|property|itemprop)=["\']([^"\']+)["\']',
             re.IGNORECASE
@@ -355,7 +340,6 @@ class UniversalExtractor:
         for val, prop in meta_pattern_alt.findall(html_content):
             meta_dict[prop.lower().strip()] = html.unescape(val.strip())
 
-        # 1. Price extraction
         price_keys = [
             "product:price:amount", "og:price:amount", "twitter:data1",
             "price", "product:sale_price:amount", "product:original_price:amount",
@@ -385,7 +369,6 @@ class UniversalExtractor:
                 if c:
                     out["currency"] = c
 
-        # 2. Availability extraction
         avail_keys = ["product:availability", "og:availability", "availability"]
         for k in avail_keys:
             if k in meta_dict and meta_dict[k]:
@@ -397,14 +380,12 @@ class UniversalExtractor:
                 if out["availability"] != AvailabilityStatusEnum.UNKNOWN:
                     break
 
-        # 3. Product Title / Name
         if not out["name"]:
             for k in ["og:title", "twitter:title", "product:title", "title"]:
                 if k in meta_dict and meta_dict[k]:
                     out["name"] = meta_dict[k]
                     break
 
-        # 4. Brand
         if not out["brand"]:
             for k in ["product:brand", "og:brand", "brand", "twitter:brand"]:
                 if k in meta_dict and meta_dict[k]:
@@ -414,7 +395,6 @@ class UniversalExtractor:
     @classmethod
     def _extract_embedded_framework_state(cls, html_content: str, out: Dict[str, Any]) -> None:
         """Searches for Next.js (__NEXT_DATA__), Nuxt, or Window Initial State blobs."""
-        # Next.js
         next_match = re.search(r'<script\s+id="__NEXT_DATA__"\s+type="application/json">(.*?)</script>', html_content, re.DOTALL)
         if next_match:
             try:
@@ -425,7 +405,6 @@ class UniversalExtractor:
             except Exception:
                 pass
 
-        # Window state
         state_match = re.search(r'window\.(?:__INITIAL_STATE__|__PRELOADED_STATE__|__APOLLO_STATE__)\s*=\s*(\{.*?\});', html_content, re.DOTALL)
         if state_match:
             try:
@@ -441,7 +420,6 @@ class UniversalExtractor:
             return
 
         if isinstance(node, dict):
-            # Check current dictionary for price keys
             for p_key in ["price", "current_price", "sale_price", "offerPrice", "unitPrice", "amount", "final_price"]:
                 if p_key in node and node[p_key] is not None:
                     val = node[p_key]
@@ -454,21 +432,18 @@ class UniversalExtractor:
                                 out["currency"] = c
                             break
 
-            # Check for title/name
             if not out["name"]:
                 for n_key in ["title", "productTitle", "name", "productName"]:
                     if n_key in node and isinstance(node[n_key], str) and len(node[n_key]) > 2:
                         out["name"] = node[n_key].strip()
                         break
 
-            # Check for SKU
             if not out["sku"]:
                 for s_key in ["sku", "asin", "upc", "gtin", "productId", "modelNumber"]:
                     if s_key in node and isinstance(node[s_key], (str, int)):
                         out["sku"] = str(node[s_key]).strip()
                         break
 
-            # Recurse children
             for v in node.values():
                 cls._extract_from_json_dict(v, out, depth + 1)
                 if out["price"] is not None and out["currency"] is not None:
@@ -483,7 +458,6 @@ class UniversalExtractor:
     @classmethod
     def _extract_semantic_html_heuristics(cls, html_content: str, out: Dict[str, Any]) -> None:
         """Generic fallback heuristics using regex patterns on price-labeled elements."""
-        # Generic price regex capturing currency symbol/code and numeric value
         price_regex = re.compile(
             r'(?:[\$€£¥₹₽₩฿₫₱]|USD|EUR|GBP|CAD|AUD|JPY|INR|CHF|AED|BRL)\s*([0-9]{1,3}(?:[,\.][0-9]{3})*(?:[,\.][0-9]{2})?)'
             r'|'
@@ -491,7 +465,6 @@ class UniversalExtractor:
             re.IGNORECASE
         )
 
-        # Look in priority containers
         semantic_snippets = re.findall(
             r'(?:class|id|data-[a-z-]+)=["\'][^"\']*(?:price|offer|amount|cost|val)[^"\']*["\'][^>]*>([^<]{1,60})<',
             html_content,
@@ -509,7 +482,6 @@ class UniversalExtractor:
                     out["currency"] = c
                 break
 
-        # Check for stock availability keywords in text
         lower_html = html_content.lower()
         if "out of stock" in lower_html or "sold out" in lower_html or "currently unavailable" in lower_html:
             out["availability"] = AvailabilityStatusEnum.OUT_OF_STOCK
@@ -537,38 +509,30 @@ class UniversalExtractor:
         if provided_currency and len(provided_currency.strip()) == 3:
             detected_currency = provided_currency.strip().upper()
 
-        # Check for currency symbols
         for sym, code in CURRENCY_SYMBOL_MAP.items():
             if sym in cleaned:
                 if not detected_currency:
                     detected_currency = code
                 cleaned = cleaned.replace(sym, "")
 
-        # Check for ISO code in string
         for code in ["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "INR", "CHF", "AED", "BRL", "SEK", "PLN"]:
             if code in cleaned.upper():
                 if not detected_currency:
                     detected_currency = code
                 cleaned = re.sub(code, "", cleaned, flags=re.IGNORECASE)
 
-        # Remove extraneous characters except numbers, dots, commas, minus
         cleaned = re.sub(r'[^0-9\.,]', '', cleaned).strip()
         if not cleaned:
             return None, detected_currency
 
-        # Handle European vs US number formatting (e.g. 1.299,99 vs 1,299.99)
         if "," in cleaned and "." in cleaned:
             if cleaned.rfind(",") > cleaned.rfind("."):
-                # European style: 1.299,99 -> 1299.99
                 cleaned = cleaned.replace(".", "").replace(",", ".")
             else:
-                # US style: 1,299.99 -> 1299.99
                 cleaned = cleaned.replace(",", "")
         elif "," in cleaned and "." not in cleaned:
-            # Check if comma is decimal or thousands separator
             parts = cleaned.split(",")
             if len(parts) == 2 and len(parts[1]) == 2:
-                # e.g. 149,99 -> 149.99
                 cleaned = cleaned.replace(",", ".")
             else:
                 cleaned = cleaned.replace(",", "")
@@ -606,7 +570,6 @@ class DualEngineExtractorService:
         if not normalized_url.startswith("http://") and not normalized_url.startswith("https://"):
             normalized_url = f"https://{normalized_url}"
 
-        # Setup standard browser headers to minimize bot false-positives
         headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -628,14 +591,12 @@ class DualEngineExtractorService:
             "Upgrade-Insecure-Requests": "1"
         }
 
-        # Step 1: Fast-Path HTTP Request
         http_status: Optional[int] = None
         final_url = normalized_url
         raw_body: str = ""
         response_headers: Dict[str, str] = {}
 
         try:
-            # We use urllib or httpx depending on environment availability
             try:
                 import httpx
                 async with httpx.AsyncClient(
@@ -684,16 +645,13 @@ class DualEngineExtractorService:
 
         elapsed_ms = int((time.perf_counter() - start_time) * 1000)
 
-        # Step 2: Handle HTTP 202 Accepted specifically
         if http_status == 202:
             logger.warning(
                 f"[HTTP 202 Accepted] Target {normalized_url} responded with 202 Accepted. "
                 f"Body length: {len(raw_body)} chars."
             )
-            # Inspect response for possible redirect or embedded content
             parsed_data = UniversalExtractor.extract_from_html_or_json(raw_body, final_url, response_headers)
             
-            # If price was successfully found despite 202 status:
             if parsed_data.get("price") is not None:
                 return CollectionResult(
                     http_status_code=202,
@@ -711,7 +669,6 @@ class DualEngineExtractorService:
                     is_success=True
                 )
             
-            # If no price extracted, report exact 202 diagnostic and DO NOT mark COMPLETED
             snippet = raw_body[:300].strip() if raw_body else "No response body provided"
             return CollectionResult(
                 http_status_code=202,
@@ -727,7 +684,6 @@ class DualEngineExtractorService:
                 )
             )
 
-        # Step 3: Handle other HTTP non-200 statuses
         if http_status and http_status >= 400:
             category = ErrorCategoryEnum.HTTP_5XX_SERVER_ERROR if http_status >= 500 else (
                 ErrorCategoryEnum.HTTP_403_FORBIDDEN if http_status == 403 else (
@@ -747,11 +703,9 @@ class DualEngineExtractorService:
                 error_message=f"HTTP {http_status} error received from target URL"
             )
 
-        # Step 4: Parse HTML/JSON payload dynamically
         parsed_data = UniversalExtractor.extract_from_html_or_json(raw_body, final_url, response_headers)
 
         if parsed_data.get("price") is None:
-            # Extraction did not find price
             return CollectionResult(
                 http_status_code=http_status or 200,
                 final_url=final_url,
@@ -763,7 +717,6 @@ class DualEngineExtractorService:
                 error_message="Webpage fetched successfully (HTTP 200) but no product price or Schema.org offer structure could be identified."
             )
 
-        # Successful extraction
         return CollectionResult(
             http_status_code=http_status or 200,
             final_url=final_url,

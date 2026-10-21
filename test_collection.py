@@ -59,7 +59,6 @@ async def main():
     match_id = await create_entities()
     print(f"\nMatch created: {match_id}")
 
-    # --- Test 1: example.com (static, simple HTML) ---
     print("\n=== TEST 1: example.com (static HTML) ===")
     r = await run_collection(match_id)
     obs = r.get('observation', {})
@@ -69,7 +68,6 @@ async def main():
     print(f"  auto_rendered={attrs.get('auto_rendered')} possible_challenge={attrs.get('possible_challenge')} "
           f"collection_engine={attrs.get('collection_engine')}")
 
-    # --- Test 2: httpbin.org (JSON API) ---
     print("\n=== TEST 2: httpbin.org/json (JSON API) ===")
     r2 = await discover("https://httpbin.org/json")
     print(f"  status={r2.get('status')} items={r2.get('total_items_processed')} "
@@ -78,13 +76,11 @@ async def main():
         for it in r2['items'][:3]:
             print(f"    - {it.get('name')} | {it.get('price')} {it.get('currency')} | {it.get('action')}")
 
-    # --- Test 3: GitHub API (JSON, niche: dev tools) ---
     print("\n=== TEST 3: api.github.com (JSON API, niche: dev tools) ===")
     r3 = await discover("https://api.github.com")
     print(f"  status={r3.get('status')} items={r3.get('total_items_processed')} "
           f"created={r3.get('created_offerings_count')}")
 
-    # --- Test 4: SaaS pricing page (software niche) ---
     print("\n=== TEST 4: github.com/pricing (SaaS pricing page) ===")
     r4 = await discover("https://github.com/pricing", max_pages=1)
     print(f"  status={r4.get('status')} items={r4.get('total_items_processed')} "
@@ -93,7 +89,6 @@ async def main():
         for it in r4['items'][:5]:
             print(f"    - {it.get('name')} | {it.get('price')} {it.get('currency')} | {it.get('action')}")
 
-    # --- Test 5: Bot-protected site (Cloudflare) ---
     print("\n=== TEST 5: zalando.de (bot-protected, fashion niche) ===")
     r5 = await discover("https://www.zalando.de", max_pages=1)
     print(f"  status={r5.get('status')} items={r5.get('total_items_processed')} "

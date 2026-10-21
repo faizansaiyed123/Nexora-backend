@@ -62,9 +62,6 @@ async def run_collection(
     8. Return detailed competitive intelligence.
     """
 
-    # ---------------------------------------------------------
-    # 1. Find offering match with related models
-    # ---------------------------------------------------------
 
     result = await session.execute(
         select(OfferingMatchModel)
@@ -77,11 +74,6 @@ async def run_collection(
             ).selectinload(
                 SourceModel.competitor
             ),
-            # source.configuration is read further down while the collection
-            # runs. Without an explicit selectinload that lazy load fires from
-            # async context and raises MissingGreenlet, which the catch-all at
-            # the bottom of this handler converts into a 502 for every source
-            # that has a configuration row.
             selectinload(
                 OfferingMatchModel.source
             ).selectinload(
@@ -128,12 +120,7 @@ async def run_collection(
             detail="Collection source is temporarily unavailable while its circuit breaker is open.",
 )
 
-    # ---------------------------------------------------------
-    # 2. Create collection job
-    # ---------------------------------------------------------
 
-    # Clean up any stale RUNNING jobs for this match so the unique constraint
-    # is not violated on re-runs.
     from sqlalchemy import text as sa_text
 
     await session.execute(
@@ -170,9 +157,6 @@ async def run_collection(
     session.add(job)
     await session.flush()
 
-    # ---------------------------------------------------------
-    # 3. Execute collection
-    # ---------------------------------------------------------
 
     try:
         collector = CollectionService()
@@ -199,10 +183,6 @@ async def run_collection(
             max_retries=configuration.max_retries if configuration else 0,
         )
 
-        # Auto-render fallback: when deterministic extraction produced nothing
-        # useful and the page looks JS-rendered or bot-challenged, transparently
-        # retry with a headless browser. Independent of requires_javascript so
-        # modern SPAs are covered without manual per-source configuration.
         if not collection_result.success and (
             collection_result.attributes.get("possible_dynamic_rendering")
             or collection_result.attributes.get("possible_challenge")
@@ -244,9 +224,6 @@ async def run_collection(
                     custom_selectors=selectors if isinstance(selectors, dict) else None,
                 )
 
-        # -----------------------------------------------------
-        # 4. Convert availability safely
-        # -----------------------------------------------------
 
         availability_value = (
             collection_result.availability
@@ -260,9 +237,6 @@ async def run_collection(
         except ValueError:
             availability = AvailabilityStatusEnum.UNKNOWN
 
-        # -----------------------------------------------------
-        # 5. Create observation
-        # -----------------------------------------------------
 
         observation = ObservationModel(
             offering_match_id=offering_match_id_val,
@@ -289,9 +263,6 @@ async def run_collection(
         session.add(observation)
         await session.flush()
 
-        # -----------------------------------------------------
-        # 6. Find existing snapshot
-        # -----------------------------------------------------
 
         snapshot_result = await session.execute(
             select(SnapshotModel).where(
@@ -305,9 +276,6 @@ async def run_collection(
         previous_availability = snapshot.current_availability if snapshot is not None else None
         price_movement = "FIRST_OBSERVATION"
 
-        # -----------------------------------------------------
-        # 7. Create/update snapshot only for successful data
-        # -----------------------------------------------------
 
         if collection_result.success:
             if snapshot is None:
@@ -353,12 +321,6 @@ async def run_collection(
                 snapshot.current_availability = availability
                 snapshot.last_observed_at = observation.observed_at
 
-        # -----------------------------------------------------
-        # 8. Competitive comparison
-        #
-        # Client price = offerings.base_price
-        # Competitor price = collected price
-        # -----------------------------------------------------
 
         client_price_info = None
 
@@ -430,9 +392,6 @@ async def run_collection(
                 circuit_tripped=circuit_tripped,
             )
 
-        # -----------------------------------------------------
-        # 9. Update job
-        # -----------------------------------------------------
 
         if collection_result.success:
 
@@ -455,16 +414,10 @@ async def run_collection(
                 or "Collection failed."
             )
 
-        # -----------------------------------------------------
-        # 10. Commit
-        # -----------------------------------------------------
 
         await session.commit()
         await session.refresh(job)
 
-        # -----------------------------------------------------
-        # 11. Handle collection failure
-        # -----------------------------------------------------
 
         if not collection_result.success:
 
@@ -477,9 +430,6 @@ async def run_collection(
                 },
             )
 
-        # -----------------------------------------------------
-        # 12. Return detailed response
-        # -----------------------------------------------------
 
         return {
             "job_id": str(job.id),
@@ -604,13 +554,8 @@ async def run_collection(
             "competitive_comparison": client_price_info,
         }
 
-    # ---------------------------------------------------------
-    # Unexpected application/database error
-    # ---------------------------------------------------------
 
     except RateLimitException:
-        # A throttled collection is a client-visible 429, not a failed
-        # collection job/502. Roll back the provisional job written above.
         await session.rollback()
         raise
 

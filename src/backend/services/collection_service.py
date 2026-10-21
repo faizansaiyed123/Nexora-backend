@@ -108,9 +108,6 @@ class CollectionService:
         "Pragma": "no-cache",
     }
 
-    # ------------------------------------------------------------------
-    # Retry / backoff helpers
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _backoff_delay(attempt: int, base: float = 0.5, cap: float = 8.0) -> float:
@@ -146,9 +143,6 @@ class CollectionService:
             return True
         return False
 
-    # =========================================================
-    # PUBLIC API
-    # =========================================================
 
     async def collect(
         self,
@@ -261,9 +255,6 @@ class CollectionService:
                     error="Response body exceeds the maximum allowed size.",
                 )
 
-            # =================================================
-            # HTTP ERROR
-            # =================================================
 
             if response.status_code >= 400:
 
@@ -287,9 +278,6 @@ class CollectionService:
                     error=f"HTTP {response.status_code}",
                 )
 
-            # =================================================
-            # JSON RESPONSE
-            # =================================================
 
             if self._is_json_content(
                 content_type,
@@ -341,16 +329,12 @@ class CollectionService:
                     ),
                 )
 
-            # =================================================
-            # HTML RESPONSE
-            # =================================================
 
             soup = BeautifulSoup(
                 raw_payload,
                 "html.parser",
             )
 
-            # Production pipeline: UniversalExtractor first, then legacy extractor.
             extractor = UniversalExtractor()
             ue_result = extractor.extract(
                 raw_payload, final_url, custom_selectors=custom_selectors
@@ -361,7 +345,6 @@ class CollectionService:
             availability = ue_result.availability
             attributes = dict(ue_result.attributes)
 
-            # Fallback to legacy extractor if UniversalExtractor found nothing useful.
             if price is None and availability in (None, "UNKNOWN"):
                 legacy = self._extract_html(
                     soup=soup,
@@ -377,7 +360,6 @@ class CollectionService:
                     availability = legacy["availability"]
                 attributes = {**legacy["attributes"], **attributes}
 
-            # Merge discovered product fields into attributes.
             for field_name in ("name", "sku", "brand", "category", "image", "description"):
                 value = getattr(ue_result, field_name, None)
                 if value:
@@ -404,9 +386,6 @@ class CollectionService:
                 "content_length": content_length,
             }
 
-            # =================================================
-            # PAGE METADATA
-            # =================================================
 
             title = soup.find("title")
 
@@ -455,9 +434,6 @@ class CollectionService:
                     canonical["href"],
                 )
 
-            # =================================================
-            # DYNAMIC PAGE DIAGNOSTICS
-            # =================================================
 
             if response.status_code == 202:
 
@@ -482,14 +458,6 @@ class CollectionService:
                         "possible_challenge"
                     ] = True
 
-            # =================================================
-            # AUTO-RENDER FALLBACK (best-effort)
-            # =================================================
-            #
-            # When deterministic extraction produced nothing useful and the
-            # page looks JS-rendered or bot-challenged, transparently retry with
-            # a headless browser. This is opt-out via settings.auto_render_enabled
-            # and never blocks the caller when Playwright is unavailable.
 
             if (
                 extraction_status in ("NO_DATA", "PARTIAL", "TIMEOUT", "HTTP_ERROR")
@@ -542,9 +510,6 @@ class CollectionService:
                 ),
             )
 
-        # =====================================================
-        # TIMEOUT
-        # =====================================================
 
         except httpx.TimeoutException:
 
@@ -552,7 +517,6 @@ class CollectionService:
                 (time.perf_counter() - start_time) * 1000
             )
 
-            # Try auto-render fallback for slow/JS-heavy sites.
             rendered = await self._try_render(url, timeout_seconds=max(int(timeout) * 3, 30))
             if rendered is not None:
                 rendered_result = self.from_rendered_html(
@@ -582,9 +546,6 @@ class CollectionService:
                 error="Request timeout",
             )
 
-        # =====================================================
-        # HTTP ERROR
-        # =====================================================
 
         except httpx.HTTPError as exc:
 
@@ -592,7 +553,6 @@ class CollectionService:
                 (time.perf_counter() - start_time) * 1000
             )
 
-            # Try auto-render fallback for HTTP errors that may be bot challenges.
             rendered = await self._try_render(url, timeout_seconds=max(int(timeout) * 3, 30))
             if rendered is not None:
                 rendered_result = self.from_rendered_html(
@@ -621,9 +581,6 @@ class CollectionService:
                 error=safe_collection_error(exc),
             )
 
-        # =====================================================
-        # UNEXPECTED ERROR
-        # =====================================================
 
         except Exception as exc:
 
@@ -654,7 +611,6 @@ class CollectionService:
         custom_selectors: Optional[dict[str, Any]] = None,
     ) -> CollectionResult:
         """Extract competitive data from HTML already rendered by a browser."""
-        # Production pipeline: UniversalExtractor first, then legacy extractor.
         extractor = UniversalExtractor()
         ue_result = extractor.extract(html, url, custom_selectors=custom_selectors)
 
@@ -663,7 +619,6 @@ class CollectionService:
         availability = ue_result.availability
         attributes = dict(ue_result.attributes)
 
-        # Fallback to legacy extractor if UniversalExtractor found nothing useful.
         if price is None and availability in (None, "UNKNOWN"):
             soup = BeautifulSoup(html, "html.parser")
             legacy = self._extract_html(
@@ -680,7 +635,6 @@ class CollectionService:
                 availability = legacy["availability"]
             attributes = {**legacy["attributes"], **attributes}
 
-        # Merge discovered product fields into attributes.
         for field_name in ("name", "sku", "brand", "category", "image", "description"):
             value = getattr(ue_result, field_name, None)
             if value:
@@ -726,9 +680,6 @@ class CollectionService:
             logger.info("Auto-render skipped for %s: %s", url, exc)
             return None
 
-    # =========================================================
-    # HTML EXTRACTION
-    # =========================================================
 
     def _extract_html(
         self,
@@ -744,9 +695,6 @@ class CollectionService:
 
         attributes: dict[str, Any] = {}
 
-        # -----------------------------------------------------
-        # 1. JSON-LD
-        # -----------------------------------------------------
 
         jsonld_data = self._extract_jsonld(
             soup
@@ -777,9 +725,6 @@ class CollectionService:
                 jsonld_result["attributes"]
             )
 
-        # -----------------------------------------------------
-        # 2. Meta / OpenGraph
-        # -----------------------------------------------------
 
         meta_result = self._extract_from_meta(
             soup
@@ -800,9 +745,6 @@ class CollectionService:
             meta_result["attributes"]
         )
 
-        # -----------------------------------------------------
-        # 3. Embedded JSON
-        # -----------------------------------------------------
 
         embedded_result = (
             self._extract_embedded_json(
@@ -827,9 +769,6 @@ class CollectionService:
             embedded_result["attributes"]
         )
 
-        # -----------------------------------------------------
-        # 4. Microdata
-        # -----------------------------------------------------
 
         microdata_result = (
             self._extract_microdata(
@@ -854,9 +793,6 @@ class CollectionService:
             microdata_result["attributes"]
         )
 
-        # -----------------------------------------------------
-        # 5. Generic HTML selectors
-        # -----------------------------------------------------
 
         html_result = (
             self._extract_from_html_selectors(
@@ -880,9 +816,6 @@ class CollectionService:
             html_result["attributes"]
         )
 
-        # -----------------------------------------------------
-        # 6. Dynamic HTML attributes
-        # -----------------------------------------------------
 
         dynamic_result = (
             self._extract_dynamic_html_attributes(
@@ -894,9 +827,6 @@ class CollectionService:
             dynamic_result
         )
 
-        # -----------------------------------------------------
-        # 7. Generic page text
-        # -----------------------------------------------------
 
         text = soup.get_text(
             " ",
@@ -930,9 +860,6 @@ class CollectionService:
             "attributes": attributes,
         }
 
-    # =========================================================
-    # JSON EXTRACTION
-    # =========================================================
 
     def _extract_json(
         self,
@@ -960,9 +887,6 @@ class CollectionService:
             data
         )
 
-    # =========================================================
-    # JSON-LD
-    # =========================================================
 
     def _extract_jsonld(
         self,
@@ -1010,9 +934,6 @@ class CollectionService:
 
         return objects
 
-    # =========================================================
-    # STRUCTURED DATA
-    # =========================================================
 
     def _extract_from_structured_data(
         self,
@@ -1025,10 +946,6 @@ class CollectionService:
 
         attributes: dict[str, Any] = {}
 
-        # Preserve the original structured data.
-        #
-        # This is dynamic and does not assume any
-        # product attribute names.
         attributes["structured_data"] = data
 
         for obj in self._walk_json(data):
@@ -1036,9 +953,6 @@ class CollectionService:
             if not isinstance(obj, dict):
                 continue
 
-            # -------------------------------------------------
-            # PRICE
-            # -------------------------------------------------
 
             if price is None:
 
@@ -1064,9 +978,6 @@ class CollectionService:
                         price = candidate
                         break
 
-            # -------------------------------------------------
-            # CURRENCY
-            # -------------------------------------------------
 
             if currency is None:
 
@@ -1086,9 +997,6 @@ class CollectionService:
                         currency = detected
                         break
 
-            # -------------------------------------------------
-            # AVAILABILITY
-            # -------------------------------------------------
 
             if availability is None:
 
@@ -1109,19 +1017,7 @@ class CollectionService:
                         availability = detected
                         break
 
-            # -------------------------------------------------
-            # Dynamic attributes
-            # -------------------------------------------------
 
-            #
-            # We do NOT do:
-            #
-            # if key == "brand"
-            # if key == "sku"
-            # if key == "name"
-            #
-            # Instead, all structured data is preserved above.
-            #
 
         return {
             "price": price,
@@ -1130,9 +1026,6 @@ class CollectionService:
             "attributes": attributes,
         }
 
-    # =========================================================
-    # META / OPENGRAPH
-    # =========================================================
 
     def _extract_from_meta(
         self,
@@ -1145,7 +1038,6 @@ class CollectionService:
 
         attributes: dict[str, Any] = {}
 
-        # Store ALL meta tags dynamically.
         meta_attributes: dict[str, Any] = {}
 
         for element in soup.find_all(
@@ -1171,9 +1063,6 @@ class CollectionService:
 
         attributes["meta"] = meta_attributes
 
-        # -----------------------------------------------------
-        # Detect price from known metadata conventions
-        # -----------------------------------------------------
 
         price_fields = [
             "product:price:amount",
@@ -1216,9 +1105,6 @@ class CollectionService:
             if price is not None:
                 break
 
-        # -----------------------------------------------------
-        # Currency
-        # -----------------------------------------------------
 
         currency_fields = [
             "product:price:currency",
@@ -1263,9 +1149,6 @@ class CollectionService:
             if currency:
                 break
 
-        # -----------------------------------------------------
-        # Availability
-        # -----------------------------------------------------
 
         availability_fields = [
             "product:availability",
@@ -1316,9 +1199,6 @@ class CollectionService:
             "attributes": attributes,
         }
 
-    # =========================================================
-    # EMBEDDED JSON
-    # =========================================================
 
     def _extract_embedded_json(
         self,
@@ -1403,9 +1283,6 @@ class CollectionService:
 
         return result
 
-    # =========================================================
-    # MICRODATA
-    # =========================================================
 
     def _extract_microdata(
         self,
@@ -1444,7 +1321,6 @@ class CollectionService:
             if value is None:
                 continue
 
-            # Preserve dynamically.
             existing = microdata.get(
                 key
             )
@@ -1464,9 +1340,6 @@ class CollectionService:
                     value,
                 ]
 
-            # ---------------------------------------------
-            # Only canonical fields are interpreted.
-            # ---------------------------------------------
 
             if (
                 key == "price"
@@ -1505,9 +1378,6 @@ class CollectionService:
             },
         }
 
-    # =========================================================
-    # GENERIC HTML SELECTORS
-    # =========================================================
 
     def _extract_from_html_selectors(
         self,
@@ -1521,9 +1391,6 @@ class CollectionService:
 
         attributes: dict[str, Any] = {}
 
-        # -----------------------------------------------------
-        # PRICE
-        # -----------------------------------------------------
 
         configured_price = custom_selectors.get("price_selector") if isinstance(custom_selectors, dict) else None
         configured_currency = custom_selectors.get("currency_selector") if isinstance(custom_selectors, dict) else None
@@ -1578,9 +1445,6 @@ class CollectionService:
             if price is not None:
                 break
 
-        # -----------------------------------------------------
-        # CURRENCY
-        # -----------------------------------------------------
 
         currency_element = soup.select_one(str(configured_currency)) if configured_currency else soup.select_one('[itemprop="priceCurrency"]')
 
@@ -1601,9 +1465,6 @@ class CollectionService:
                 )
             )
 
-        # -----------------------------------------------------
-        # AVAILABILITY
-        # -----------------------------------------------------
 
         availability_selectors = [
             *([str(configured_availability)] if configured_availability else []),
@@ -1650,9 +1511,6 @@ class CollectionService:
             "attributes": attributes,
         }
 
-    # =========================================================
-    # DYNAMIC HTML ATTRIBUTES
-    # =========================================================
 
     def _extract_dynamic_html_attributes(
         self,
@@ -1661,9 +1519,6 @@ class CollectionService:
 
         result: dict[str, Any] = {}
 
-        # -----------------------------------------------------
-        # HTML data-* attributes
-        # -----------------------------------------------------
 
         data_attributes: dict[str, Any] = {}
 
@@ -1714,9 +1569,6 @@ class CollectionService:
 
         return result
 
-    # =========================================================
-    # TEXT DETECTION
-    # =========================================================
 
     @staticmethod
     def _detect_currency_from_text(
@@ -1881,9 +1733,6 @@ class CollectionService:
 
         return None
 
-    # =========================================================
-    # NORMALIZATION
-    # =========================================================
 
     @staticmethod
     def _normalize_currency(
@@ -2044,9 +1893,6 @@ class CollectionService:
                 "",
             )
 
-        # ---------------------------------------------
-        # 1.299,99
-        # ---------------------------------------------
 
         if "," in text and "." in text:
 
@@ -2072,9 +1918,6 @@ class CollectionService:
                     "",
                 )
 
-        # ---------------------------------------------
-        # 399,99
-        # ---------------------------------------------
 
         elif "," in text:
 
@@ -2112,9 +1955,6 @@ class CollectionService:
         except InvalidOperation:
             return None
 
-    # =========================================================
-    # HELPERS
-    # =========================================================
 
     @staticmethod
     def _walk_json(
@@ -2310,7 +2150,6 @@ class CollectionService:
         ):
             return True
 
-        # CDN-specific markers in markup (case-insensitive).
         lower_html = html.lower()
         cdn_markers = [
             "cf-chl-bypass",

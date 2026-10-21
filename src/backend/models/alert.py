@@ -66,7 +66,6 @@ class AlertRuleModel(Base):
         nullable=False,
     )
 
-    # Relationships
     client: Mapped["ClientModel"] = relationship("ClientModel")
     offering: Mapped[Optional["OfferingModel"]] = relationship("OfferingModel")
     alert_logs: Mapped[List["AlertLogModel"]] = relationship(
@@ -101,6 +100,5 @@ class AlertLogModel(Base):
         index=True,
     )
 
-    # Relationships
     alert_rule: Mapped["AlertRuleModel"] = relationship("AlertRuleModel", back_populates="alert_logs")
     offering_match: Mapped[Optional["OfferingMatchModel"]] = relationship("OfferingMatchModel")

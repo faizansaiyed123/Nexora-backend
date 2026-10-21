@@ -30,9 +30,6 @@ from bs4 import BeautifulSoup
 logger = __import__("logging").getLogger("nexora.universal_extractor")
 
 
-# =========================================================================
-# Result contract
-# =========================================================================
 
 
 @dataclass
@@ -51,9 +48,6 @@ class ExtractionResult:
     confidence: float = 0.0
 
 
-# =========================================================================
-# Price / currency / availability helpers
-# =========================================================================
 
 
 def _parse_price(value: Any) -> Optional[Decimal]:
@@ -141,13 +135,9 @@ def _normalize_availability(value: Any) -> Optional[str]:
     return None
 
 
-# =========================================================================
-# Site-specific selector presets
-# =========================================================================
 
 
 SITE_PRESETS: dict[str, dict[str, Any]] = {
-    # Amazon (all regional variants)
     "amazon.in": {
         "price_selector": "#corePriceDisplay_desktop_section_div .a-price-whole, #priceblock_ourprice, #priceblock_dealprice, .a-price .a-offscreen",
         "currency_selector": "#corePriceDisplay_desktop_section_div .a-price-symbol, .a-price .a-price-symbol",
@@ -181,7 +171,6 @@ SITE_PRESETS: dict[str, dict[str, Any]] = {
         "image_selector": "#landingImage, #imgBlkFront",
         "description_selector": "#feature-bullets li, #productDescription p",
     },
-    # Flipkart
     "flipkart.com": {
         "price_selector": "div.Nx9bqj, ._30jeq3._16Jk6d, ._1_WHN1, .CEpuCY",
         "currency_selector": "div.Nx9bqj, ._30jeq3._16Jk6d",
@@ -193,7 +182,6 @@ SITE_PRESETS: dict[str, dict[str, Any]] = {
         "image_selector": ".DByuf4 img, ._396cs4 img, .CXW8mj img",
         "description_selector": "._1mXcCf.Rmojen, ._1mXcCf",
     },
-    # Puma
     "in.puma.com": {
         "price_selector": ".puma-price, .product-price, [data-testid='product-price'], .price-current",
         "currency_selector": ".puma-price, .product-price",
@@ -205,7 +193,6 @@ SITE_PRESETS: dict[str, dict[str, Any]] = {
         "image_selector": ".product-image img, .gallery-image img, [data-testid='product-image']",
         "description_selector": ".product-description, .product-details p",
     },
-    # MakeMyTrip / Goibibo (travel)
     "www.makemytrip.com": {
         "price_selector": ".widget__price, .price__amount, .actual-price, [data-cy='price']",
         "currency_selector": ".widget__price, .price__currency",
@@ -228,7 +215,6 @@ SITE_PRESETS: dict[str, dict[str, Any]] = {
         "image_selector": ".image img",
         "description_selector": ".description",
     },
-    # Generic / fallback - used when no preset matches
     "__default__": {
         "price_selector": '[itemprop="price"], [data-price], [data-product-price], [data-sale-price], [data-current-price], [class*="price"], [id*="price"], .price, .product-price, .sale-price, .current-price',
         "currency_selector": '[itemprop="priceCurrency"], [data-currency], .currency',
@@ -248,13 +234,10 @@ def get_site_preset(url: str) -> dict[str, Any]:
     try:
         host = urlparse(url).hostname or ""
         host = host.lower()
-        # Strip www.
         if host.startswith("www."):
             host = host[4:]
-        # Try exact match
         if host in SITE_PRESETS:
             return SITE_PRESETS[host]
-        # Try partial match (amazon.co.uk, amazon.in, etc.)
         for key in SITE_PRESETS:
             if key != "__default__" and host.endswith(key):
                 return SITE_PRESETS[key]
@@ -263,9 +246,6 @@ def get_site_preset(url: str) -> dict[str, Any]:
     return dict(SITE_PRESETS["__default__"])
 
 
-# =========================================================================
-# HTML parsing helpers
-# =========================================================================
 
 
 def _get_text(element: Any) -> str:
@@ -296,9 +276,6 @@ def _resolve_url(url: str, base_url: str) -> Optional[str]:
         return url
 
 
-# =========================================================================
-# Strategy 1: Custom selectors (always first if provided)
-# =========================================================================
 
 
 def _extract_with_custom_selectors(
@@ -311,7 +288,7 @@ def _extract_with_custom_selectors(
 
     result = ExtractionResult()
     result.strategy_used = "CUSTOM_SELECTORS"
-    result.confidence = 0.98  # User-configured selectors are highly trusted
+    result.confidence = 0.98
 
     price_sel = custom_selectors.get("price_selector")
     currency_sel = custom_selectors.get("currency_selector")
@@ -375,9 +352,6 @@ def _extract_with_custom_selectors(
     return result
 
 
-# =========================================================================
-# Strategy 2: JSON-LD / Schema.org
-# =========================================================================
 
 
 def _extract_json_ld(soup: BeautifulSoup) -> ExtractionResult:
@@ -395,7 +369,6 @@ def _extract_json_ld(soup: BeautifulSoup) -> ExtractionResult:
         except (json.JSONDecodeError, TypeError):
             continue
 
-        # Recursively find all product-like objects in the JSON-LD data.
         prod_objects = _find_product_objects(data)
         for obj in prod_objects:
             if not isinstance(obj, dict):
@@ -450,23 +423,15 @@ def _extract_json_ld(soup: BeautifulSoup) -> ExtractionResult:
     return result
 
 
-# =========================================================================
-# Strategy 3: SPA embedded state (__NEXT_DATA__, __NUXT__, __INITIAL_STATE__, window.__data__)
-# =========================================================================
 
 
 _SPA_PATTERNS = [
-    # Next.js
     re.compile(r"<script[^>]*id=\"__NEXT_DATA__\"[^>]*>(.*?)</script>", re.S | re.I),
-    # Nuxt.js
     re.compile(r"<script[^>]*id=\"__NUXT_DATA__\"[^>]*>(.*?)</script>", re.S | re.I),
     re.compile(r"window\.__NUXT__\s*=\s*(.*?);</script>", re.S | re.I),
-    # Initial state
     re.compile(r"window\.__INITIAL_STATE__\s*=\s*(.*?);</script>", re.S | re.I),
-    # General window data
     re.compile(r"window\.__data__\s*=\s*(.*?);</script>", re.S | re.I),
     re.compile(r"window\.__PRELOADED_STATE__\s*=\s*(.*?);</script>", re.S | re.I),
-    # Shopify / common
     re.compile(r"window\.Shopify\s*=\s*(.*?);</script>", re.S | re.I),
     re.compile(r"window\.product\s*=\s*(.*?);</script>", re.S | re.I),
     re.compile(r"window\.__PRELOADED_STATE__\s*=\s*(.*?);</script>", re.S | re.I),
@@ -488,7 +453,6 @@ def _extract_spa_state(html: str, base_url: str) -> ExtractionResult:
         except (json.JSONDecodeError, TypeError):
             continue
 
-        # Walk the data looking for product-like objects
         products = _find_product_objects(data)
         for prod in products:
             if not isinstance(prod, dict):
@@ -565,9 +529,6 @@ def _find_product_objects(data: Any, depth: int = 0) -> list[dict]:
     return results
 
 
-# =========================================================================
-# Strategy 4: Meta / OpenGraph
-# =========================================================================
 
 
 def _extract_meta(soup: BeautifulSoup) -> ExtractionResult:
@@ -646,9 +607,6 @@ def _extract_meta(soup: BeautifulSoup) -> ExtractionResult:
     return result
 
 
-# =========================================================================
-# Strategy 5: Embedded JSON scripts (non-ld+json)
-# =========================================================================
 
 
 def _extract_embedded_json(soup: BeautifulSoup) -> ExtractionResult:
@@ -692,9 +650,6 @@ def _extract_embedded_json(soup: BeautifulSoup) -> ExtractionResult:
     return result
 
 
-# =========================================================================
-# Strategy 6: Microdata / RDFa
-# =========================================================================
 
 
 def _extract_microdata(soup: BeautifulSoup) -> ExtractionResult:
@@ -736,9 +691,6 @@ def _extract_microdata(soup: BeautifulSoup) -> ExtractionResult:
     return result
 
 
-# =========================================================================
-# Strategy 7: Generic HTML selectors
-# =========================================================================
 
 
 def _extract_html_selectors(soup: BeautifulSoup, base_url: str) -> ExtractionResult:
@@ -814,9 +766,6 @@ def _extract_html_selectors(soup: BeautifulSoup, base_url: str) -> ExtractionRes
     return result
 
 
-# =========================================================================
-# Strategy 8: Text pattern detection (last resort)
-# =========================================================================
 
 
 def _extract_from_text(soup: BeautifulSoup, currency_hint: Optional[str] = None) -> ExtractionResult:
@@ -828,7 +777,6 @@ def _extract_from_text(soup: BeautifulSoup, currency_hint: Optional[str] = None)
     if not text:
         return result
 
-    # Try to find price patterns
     currency = currency_hint or _detect_currency_from_text(text)
     if currency:
         patterns = _get_price_patterns_for_currency(currency)
@@ -875,9 +823,6 @@ def _get_price_patterns_for_currency(currency: str) -> list[str]:
     return [r"[\$€£₹¥]\s*\d[\d,]*(?:\.\d{1,4})?"]
 
 
-# =========================================================================
-# Main extractor
-# =========================================================================
 
 
 class UniversalExtractor:
@@ -902,9 +847,6 @@ class UniversalExtractor:
             ("text_detection", self._run_text_detection),
         ]
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
 
     def extract(
         self,
@@ -930,27 +872,21 @@ class UniversalExtractor:
                 else:
                     res = strategy(soup, base_url, html)
 
-                # Track best partial result
                 if res.confidence > best_confidence:
                     best_result = res
                     best_confidence = res.confidence
 
-                # Stop early if we have a price with high confidence
                 if res.price is not None and res.confidence >= 0.85:
                     return res
             except Exception as exc:
                 logger.debug("Extraction strategy %s failed: %s", name, exc)
                 continue
 
-        # Return best result we have
         if best_result:
             return best_result
 
         return ExtractionResult(strategy_used="NONE", confidence=0.0)
 
-    # ------------------------------------------------------------------
-    # Strategy runners
-    # ------------------------------------------------------------------
 
     def _run_custom_selectors(
         self, soup: BeautifulSoup, base_url: str, custom_selectors: Optional[dict[str, Any]]

@@ -14,8 +14,6 @@ from typing import Optional
 
 logger = logging.getLogger("nexora.stealth")
 
-# A small rotation of common desktop user-agents. We deliberately avoid the very
-# latest Chrome release because some sites fingerprint the exact patch version.
 _USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
@@ -23,7 +21,6 @@ _USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 ]
 
-# Plausible plugin/mime-type lists for a typical desktop Chrome install.
 _PLUGIN_DATA = [
     {"name": "PDF Viewer", "description": "Portable Document Format"},
     {"name": "Chrome PDF Viewer", "description": "Portable Document Format"},
@@ -54,14 +51,12 @@ async def apply_stealth(page, user_agent: Optional[str] = None) -> None:
     except Exception:
         logger.debug("Could not set extra HTTP headers for stealth.")
 
-    # 1. Hide the Playwright/automation marker that many detection libraries check.
     await page.evaluate(
         """
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true });
         """
     )
 
-    # 2. Spoof the plugins array so navigator.plugins.length looks like a real browser.
     await page.evaluate(
         """
         (plugins) => {
@@ -74,7 +69,6 @@ async def apply_stealth(page, user_agent: Optional[str] = None) -> None:
         _PLUGIN_DATA,
     )
 
-    # 3. Spoof navigator.mimeTypes.
     await page.evaluate(
         """
         (mimes) => {
@@ -97,7 +91,6 @@ async def apply_stealth(page, user_agent: Optional[str] = None) -> None:
         _MIME_TYPES,
     )
 
-    # 4. languages should match a real desktop locale.
     await page.evaluate(
         """
         Object.defineProperty(navigator, 'languages', {
@@ -107,7 +100,6 @@ async def apply_stealth(page, user_agent: Optional[str] = None) -> None:
         """
     )
 
-    # 5. Remove the tell-tale Chrome runtime flags.
     await page.evaluate(
         """
         // Some detectors look for window.chrome being undefined on non-Chromium browsers.
@@ -119,13 +111,11 @@ async def apply_stealth(page, user_agent: Optional[str] = None) -> None:
         """
     )
 
-    # 6. Spoof a consistent screen size (desktop, 1366x768 is extremely common).
     try:
         await page.set_viewport_size({"width": 1366, "height": 768})
     except Exception:
         logger.debug("Could not set viewport size for stealth.")
 
-    # 7. Mask the timezone so scheduling-based fingerprinting is less precise.
     try:
         await page.evaluate(
             """

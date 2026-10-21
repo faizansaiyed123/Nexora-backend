@@ -23,7 +23,6 @@ async def health_check(session: AsyncSession = Depends(get_db)) -> dict:
     try:
         redis = await get_redis_client()
         if redis is None:
-            # Redis not configured - not an error, just mark as unavailable.
             checks["redis"] = "unavailable"
         else:
             await redis.ping()

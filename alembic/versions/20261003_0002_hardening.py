@@ -31,7 +31,6 @@ def upgrade() -> None:
     if "lease_token" not in job_columns:
         op.add_column("jobs", sa.Column("lease_token", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True))
 
-    # Preserve one active scheduled job per match before adding the invariant.
     bind.execute(sa.text("""
         WITH ranked AS (
             SELECT id,

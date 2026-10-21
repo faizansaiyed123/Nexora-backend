@@ -36,7 +36,6 @@ from backend.models.notification import NotificationOutboxModel
 from backend.models.offering import DynamicFieldDefinitionModel, OfferingModel
 
 __all__ = [
-    # Base Enums
     "RoleEnum",
     "ClientStatusEnum",
     "OfferingTypeEnum",
@@ -54,25 +53,19 @@ __all__ = [
     "MatchStatusEnum",
     "CompetitiveEventTypeEnum",
     "AlertTypeEnum",
-    # Tenant & RBAC
     "ClientModel",
     "UserModel",
-    # Catalog & Offerings
     "OfferingModel",
     "DynamicFieldDefinitionModel",
-    # Competitor & Circuit Breaker Sources
     "CompetitorModel",
     "SourceModel",
     "SourceConfigurationModel",
     "OfferingMatchModel",
-    # Crawlers, Observations & Real-time Snapshots
     "JobModel",
     "ObservationModel",
     "SnapshotModel",
-    # Alerting & Notifications
     "AlertRuleModel",
     "AlertLogModel",
     "NotificationOutboxModel",
-    # Compliance & Audit Trail
     "AuditLogModel",
 ]

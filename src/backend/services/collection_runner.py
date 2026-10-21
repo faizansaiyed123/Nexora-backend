@@ -145,12 +145,6 @@ class CollectionRunner:
                 max_retries=config.max_retries if config else 0,
             )
 
-            # Auto-render fallback: when deterministic extraction produced nothing useful
-            # and the page looks JS-rendered or bot-challenged, transparently retry
-            # with a headless browser. This is independent of the
-            # requires_javascript flag so modern SPAs are covered without manual
-            # per-source configuration. Failures here are non-fatal: the caller
-            # already has a deterministic result to fall back to.
             if not result.success and (
                 result.attributes.get("possible_dynamic_rendering")
                 or result.attributes.get("possible_challenge")
@@ -181,9 +175,6 @@ class CollectionRunner:
 
             availability = self._availability(result.availability)
 
-            # Serialize the state transition for exactly this match. The network
-            # request remains outside the lock, so unrelated collections are not
-            # blocked by slow remote sites.
             await session.execute(
                 select(OfferingMatchModel.id)
                 .where(OfferingMatchModel.id == match.id)

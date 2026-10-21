@@ -17,8 +17,6 @@ async def app_exception_handler(
     }
     headers: dict[str, str] = {}
 
-    # Expose an explicit, machine-readable delay so clients can show a
-    # countdown. The server remains the source of truth for every request.
     if isinstance(exc, RateLimitException):
         retry_after = max(1, int(exc.retry_after_seconds))
         content["error"]["retry_after_seconds"] = retry_after

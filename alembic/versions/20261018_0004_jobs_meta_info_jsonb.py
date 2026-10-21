@@ -59,5 +59,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Keep JSONB and the GIN index; converting back to JSON would invalidate it.
     pass

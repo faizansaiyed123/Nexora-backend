@@ -55,9 +55,6 @@ from backend.services.url_security import SecurityValidationError, UrlSecuritySe
 class OfferingService:
     """Service handling offering operations, catalog management, and competitor enrichment."""
 
-    # --------------------------------------------------------------------------
-    # Helper: Plan Limit Check
-    # --------------------------------------------------------------------------
     @staticmethod
     async def _check_catalog_limit(
         db: AsyncSession,
@@ -67,15 +64,13 @@ class OfferingService:
         """
         Verifies that the tenant has not exceeded their active offerings quota.
         """
-        # Fetch client's max_tracked_offerings
         client_res = await db.execute(
             select(ClientModel.max_tracked_offerings).where(ClientModel.id == client_id)
         )
         max_allowed = client_res.scalar_one_or_none()
         if max_allowed is None:
-            max_allowed = 500  # Default fallback
+            max_allowed = 500
 
-        # Count current non-archived offerings
         count_res = await db.execute(
             select(func.count(OfferingModel.id)).where(
                 OfferingModel.client_id == client_id,
@@ -94,9 +89,6 @@ class OfferingService:
                 ),
             )
 
-    # --------------------------------------------------------------------------
-    # Dynamic Field Discovery Helper
-    # --------------------------------------------------------------------------
     @staticmethod
     async def _auto_discover_dynamic_fields(
         db: AsyncSession,
@@ -110,7 +102,6 @@ class OfferingService:
         if not attributes or not isinstance(attributes, dict):
             return
 
-        # Fetch existing defined field names for this client
         existing_res = await db.execute(
             select(DynamicFieldDefinitionModel.field_name).where(
                 DynamicFieldDefinitionModel.client_id == client_id
@@ -124,7 +115,6 @@ class OfferingService:
             if key in existing_fields:
                 continue
 
-            # Infer type
             inferred_type = "STRING"
             if isinstance(val, bool):
                 inferred_type = "BOOLEAN"
@@ -133,7 +123,6 @@ class OfferingService:
             elif isinstance(val, (float, Decimal)):
                 inferred_type = "DECIMAL"
             elif isinstance(val, str):
-                # Check for ISO date string
                 if len(val) >= 10 and (val[4] == "-" and val[7] == "-"):
                     try:
                         datetime.fromisoformat(val.replace("Z", "+00:00"))
@@ -143,7 +132,6 @@ class OfferingService:
                 else:
                     inferred_type = "STRING"
 
-            # Create human-friendly display name
             display_name = key.replace("_", " ").replace("-", " ").title()
 
             new_field = DynamicFieldDefinitionModel(
@@ -167,9 +155,6 @@ class OfferingService:
             db.add_all(new_definitions)
             await db.flush()
 
-    # --------------------------------------------------------------------------
-    # Competitor Enrichment Calculation Helper
-    # --------------------------------------------------------------------------
     @staticmethod
     async def _compute_competitor_metrics(
         db: AsyncSession,
@@ -195,7 +180,6 @@ class OfferingService:
             for oid in offering_ids
         }
 
-        # Query active matches with competitor and snapshot
         stmt = (
             select(
                 OfferingMatchModel.offering_id,
@@ -226,9 +210,6 @@ class OfferingService:
 
         return metrics
 
-    # --------------------------------------------------------------------------
-    # Single Offering: Create
-    # --------------------------------------------------------------------------
     @staticmethod
     async def create(
         db: AsyncSession,
@@ -241,10 +222,8 @@ class OfferingService:
         """
         await acquire_tenant_lock(db, client_id, "offering_quota")
 
-        # 1. Enforce plan limit
         await OfferingService._check_catalog_limit(db, client_id, adding_count=1)
 
-        # 2. Validate URLs
         validated_url = None
         if data.url:
             try:
@@ -265,7 +244,6 @@ class OfferingService:
                     detail=f"Image URL security validation failed: {str(e)}",
                 )
 
-        # 3. Sanitize JSONB dynamic attributes
         try:
             sanitized_attributes = UrlSecurityService.sanitize_attributes(data.attributes)
         except SecurityValidationError as e:
@@ -274,10 +252,8 @@ class OfferingService:
                 detail=f"Attributes security validation failed: {str(e)}",
             )
 
-        # 4. Auto-discover schema fields
         await OfferingService._auto_discover_dynamic_fields(db, client_id, sanitized_attributes)
 
-        # 5. Construct Offering model
         offering = OfferingModel(
             client_id=client_id,
             name=data.name,
@@ -303,9 +279,6 @@ class OfferingService:
 
         return offering
 
-    # --------------------------------------------------------------------------
-    # Single Offering: Get by ID with enriched details & matches
-    # --------------------------------------------------------------------------
     @staticmethod
     async def get_by_id(
         db: AsyncSession,
@@ -335,7 +308,6 @@ class OfferingService:
         if not offering:
             return None
 
-        # Build matches summary list
         match_summaries: List[CompetitorMatchSummary] = []
         comp_prices: List[Decimal] = []
 
@@ -380,7 +352,6 @@ class OfferingService:
                 )
             )
 
-        # Calculate summary metrics
         matches_count = len(match_summaries)
         min_comp_price = min(comp_prices) if comp_prices else None
         avg_comp_price = (sum(comp_prices) / Decimal(len(comp_prices))).quantize(Decimal("0.0001")) if comp_prices else None
@@ -454,9 +425,6 @@ class OfferingService:
         return [OfferingHistoryRead(**row._mapping) for row in result.all()]
 
 
-    # --------------------------------------------------------------------------
-    # List & Search Offerings with Filtering & Pagination
-    # --------------------------------------------------------------------------
     @staticmethod
     async def list_offerings(
         db: AsyncSession,
@@ -484,7 +452,6 @@ class OfferingService:
         if page_size > 500:
             page_size = 500
 
-        # Base filter condition
         filters = [OfferingModel.client_id == client_id]
 
         if not include_archived:
@@ -522,7 +489,6 @@ class OfferingService:
         if is_monitored is not None:
             filters.append(OfferingModel.is_monitored.is_(is_monitored))
 
-        # Total count query
         count_stmt = select(func.count(OfferingModel.id)).where(*filters)
         total_res = await db.execute(count_stmt)
         total_count = total_res.scalar_one() or 0
@@ -530,7 +496,6 @@ class OfferingService:
         total_pages = math.ceil(total_count / page_size) if total_count > 0 else 0
         has_more = page < total_pages
 
-        # Query page records
         offset = (page - 1) * page_size
         items_stmt = (
             select(OfferingModel)
@@ -542,7 +507,6 @@ class OfferingService:
         items_res = await db.execute(items_stmt)
         offerings = list(items_res.scalars().all())
 
-        # Enrich with competitor metrics
         offering_ids = [o.id for o in offerings]
         metrics_map = await OfferingService._compute_competitor_metrics(db, offering_ids, client_id)
 
@@ -593,9 +557,6 @@ class OfferingService:
             has_more=has_more,
         )
 
-    # --------------------------------------------------------------------------
-    # Single Offering: Update (Partial)
-    # --------------------------------------------------------------------------
     @staticmethod
     async def update(
         db: AsyncSession,
@@ -607,7 +568,6 @@ class OfferingService:
         Updates an offering partially.
         Merges dynamic attributes dictionary rather than overwriting completely if both exist.
         """
-        # Fetch offering
         res = await db.execute(
             select(OfferingModel).where(
                 OfferingModel.id == offering_id,
@@ -620,14 +580,10 @@ class OfferingService:
 
         update_fields = data.model_dump(exclude_unset=True)
 
-        # Restoring an archived offering consumes an active catalog slot, so
-        # serialize that transition with the same tenant quota lock used by
-        # creation/import paths and re-check capacity while holding the lock.
         if offering.is_archived and update_fields.get("is_archived") is False:
             await acquire_tenant_lock(db, client_id, "offering_quota")
             await OfferingService._check_catalog_limit(db, client_id, adding_count=1)
 
-        # Validate URL if updated
         if "url" in update_fields and update_fields["url"] is not None:
             try:
                 update_fields["url"] = UrlSecurityService.validate_url(update_fields["url"])
@@ -646,14 +602,12 @@ class OfferingService:
                     detail=f"Image URL security validation failed: {str(e)}",
                 )
 
-        # Merge dynamic attributes if provided
         if "attributes" in update_fields and update_fields["attributes"] is not None:
             try:
                 sanitized_new = UrlSecurityService.sanitize_attributes(update_fields["attributes"])
                 merged_attrs = dict(offering.attributes or {})
                 merged_attrs.update(sanitized_new)
                 update_fields["attributes"] = merged_attrs
-                # Discover any newly introduced fields
                 await OfferingService._auto_discover_dynamic_fields(db, client_id, sanitized_new)
             except SecurityValidationError as e:
                 raise HTTPException(
@@ -668,9 +622,6 @@ class OfferingService:
         await db.refresh(offering)
         return offering
 
-    # --------------------------------------------------------------------------
-    # Single Offering: Soft Archive (DELETE /{id})
-    # --------------------------------------------------------------------------
     @staticmethod
     async def soft_archive(
         db: AsyncSession,
@@ -696,9 +647,6 @@ class OfferingService:
         await db.commit()
         return True
 
-    # --------------------------------------------------------------------------
-    # Monitoring Toggle: POST /{id}/toggle-monitoring
-    # --------------------------------------------------------------------------
     @staticmethod
     async def toggle_monitoring(
         db: AsyncSession,
@@ -739,9 +687,6 @@ class OfferingService:
             message=f"Monitoring {status_str} for offering '{offering.name}'.",
         )
 
-    # --------------------------------------------------------------------------
-    # Bulk Ingestion: Up to 1,000 items with index-attributed error tracking
-    # --------------------------------------------------------------------------
     @staticmethod
     async def bulk_create(
         db: AsyncSession,
@@ -758,8 +703,6 @@ class OfferingService:
         items = request.items
         total_items = len(items)
 
-        # Plan limit check for total batch
-        # Count current active offerings
         client_res = await db.execute(
             select(ClientModel.max_tracked_offerings).where(ClientModel.id == client_id)
         )
@@ -779,7 +722,6 @@ class OfferingService:
         all_attributes_to_discover: Dict[str, Any] = {}
 
         for idx, item in enumerate(items):
-            # Check slot capacity
             if len(successful_offerings) >= remaining_slots:
                 errors.append(
                     BulkImportErrorItem(
@@ -791,7 +733,6 @@ class OfferingService:
                 )
                 continue
 
-            # Validate URL
             validated_url = None
             if item.url:
                 try:
@@ -807,7 +748,6 @@ class OfferingService:
                     )
                     continue
 
-            # Validate Image URL
             validated_image_url = None
             if item.image_url:
                 try:
@@ -823,7 +763,6 @@ class OfferingService:
                     )
                     continue
 
-            # Sanitize Dynamic Attributes
             try:
                 sanitized_attrs = UrlSecurityService.sanitize_attributes(item.attributes)
             except SecurityValidationError as e:
@@ -859,7 +798,6 @@ class OfferingService:
             )
             successful_offerings.append(offering)
 
-        # Auto discover any newly encountered schema fields
         if all_attributes_to_discover:
             await OfferingService._auto_discover_dynamic_fields(db, client_id, all_attributes_to_discover)
 
@@ -874,9 +812,6 @@ class OfferingService:
             errors=errors,
         )
 
-    # --------------------------------------------------------------------------
-    # Bulk Archive: POST /bulk-archive
-    # --------------------------------------------------------------------------
     @staticmethod
     async def bulk_archive(
         db: AsyncSession,
@@ -919,9 +854,6 @@ class OfferingService:
             archived_ids=archived_ids,
         )
 
-    # --------------------------------------------------------------------------
-    # Dynamic Field Definitions: CRUD
-    # --------------------------------------------------------------------------
     @staticmethod
     async def list_dynamic_fields(
         db: AsyncSession,
@@ -942,7 +874,6 @@ class OfferingService:
         data: DynamicFieldDefinitionCreate,
     ) -> DynamicFieldDefinitionModel:
         """Creates or updates a client dynamic field definition."""
-        # Check if already exists
         res = await db.execute(
             select(DynamicFieldDefinitionModel).where(
                 DynamicFieldDefinitionModel.client_id == client_id,
@@ -1006,9 +937,6 @@ class OfferingService:
         await db.commit()
         return True
 
-    # --------------------------------------------------------------------------
-    # Export Catalog: CSV & JSON
-    # --------------------------------------------------------------------------
     @staticmethod
     async def export_catalog(
         db: AsyncSession,
@@ -1060,8 +988,6 @@ class OfferingService:
             content = json.dumps(catalog_list, indent=2)
             return content, "application/json", f"catalog_export_{timestamp}.json"
 
-        # CSV Format with Flattened Dynamic Attributes
-        # 1. Collect all unique attribute keys across offerings
         dynamic_keys: set = set()
         for o in offerings:
             if o.attributes and isinstance(o.attributes, dict):
@@ -1069,7 +995,6 @@ class OfferingService:
 
         sorted_dynamic_keys = sorted(list(dynamic_keys))
 
-        # 2. Build CSV columns
         base_headers = [
             "id",
             "name",

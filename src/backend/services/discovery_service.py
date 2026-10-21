@@ -70,8 +70,6 @@ class WebsiteDiscoveryService:
             parsed = urlparse(resolved)
             if parsed.scheme not in {"http", "https"} or parsed.netloc.lower() != base_domain:
                 continue
-            # oEmbed is a standard representation of a page, not a canonical
-            # offering URL. Ignore it generically, not by website/platform.
             query_keys = {key.lower() for key, _ in parse_qsl(parsed.query, keep_blank_values=True)}
             if parsed.path.lower().endswith(".oembed") or "oembed" in query_keys:
                 continue
@@ -80,7 +78,6 @@ class WebsiteDiscoveryService:
             cleaned = parsed._replace(fragment="").geturl()
             if cleaned != current_url:
                 links.append(cleaned)
-        # Deduplicate while preserving order, prioritizing product/detail paths first
         unique_links = list(dict.fromkeys(links))
         product_like = [l for l in unique_links if any(k in urlparse(l).path.lower() for k in ("/product", "/item", "/plan", "/room", "/course", "/service", "/p/"))]
         other_links = [l for l in unique_links if l not in set(product_like)]
@@ -108,20 +105,15 @@ class WebsiteDiscoveryService:
         if structured:
             if len(structured) == 1:
                 return structured, links, "PRODUCT"
-            # A collection can expose several Product records. Use their URLs as
-            # leads, but still visit the individual pages before persistence.
             product_urls = [p.url for p in structured if p.url and p.url != page_url]
             return [], list(dict.fromkeys(product_urls + links)), "PRODUCT_LISTING"
 
         extracted = UniversalExtractor.extract_from_html_or_json(html_text, page_url)
         deterministic: List[DiscoveredProduct] = []
-        # Only accept metadata evidence when no candidate links indicate a listing.
         if (
             extracted.get("price") is not None
             and extracted.get("name")
             and not links
-            # Arbitrary JSON page representations can contain a title, SKU and
-            # price. They are leads for Gemini, never deterministic products.
             and extracted.get("strategy_used") != "DIRECT_JSON_PAYLOAD"
         ):
             deterministic.append(DiscoveredProduct.model_validate({**extracted, "url": page_url, "extraction_method": extracted.get("strategy_used", "STRUCTURED")}))
@@ -132,8 +124,6 @@ class WebsiteDiscoveryService:
             safe_urls = [url for url in ai_result.product_urls if url in set(links)]
             ai_products = [p.model_copy(update={"extraction_method": "GEMINI_FLASH"}) for p in ai_result.products if cls._has_explicit_evidence(p, html_text, allowed)]
             if ai_result.page_type == "PRODUCT_LISTING":
-                # Listing card data is a lead, not canonical catalog data. Fetch
-                # each product page so attributes and variants remain accurate.
                 return [], list(dict.fromkeys(safe_urls + links)), ai_result.page_type
             return ai_products or deterministic, list(dict.fromkeys(safe_urls + links)), ai_result.page_type
         return deterministic, links, "PRODUCT" if deterministic else "UNKNOWN"
@@ -166,9 +156,6 @@ class WebsiteDiscoveryService:
                 action = "CREATED"
         except Exception as exc:
             logger.warning("Could not persist discovered offering %s: %s", product.name, exc)
-            # OfferingService commits internally. A failed flush/commit leaves
-            # this request session unusable until rollback; isolate the bad
-            # candidate so the job can record its final state and continue.
             await db.rollback()
             return None, "SKIPPED"
         return DiscoveredItemSummary(id=result.id, name=result.name, sku=result.sku, price=result.current_price, currency=product.currency, url=result.url, category=result.category, image_url=result.image_url, attributes=result.attributes, action=action), action

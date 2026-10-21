@@ -28,7 +28,7 @@ try:
 
     _ph = PasswordHasher(
         time_cost=3,
-        memory_cost=65536,  # 64 MB
+        memory_cost=65536,
         parallelism=4,
         hash_len=32,
         salt_len=16,
@@ -82,7 +82,6 @@ except ImportError:
         return hashed_password.startswith("pbkdf2_sha256$")
 
 
-# A real password hash is used only for timing equalisation on unknown users.
 DUMMY_PASSWORD_HASH = get_password_hash(secrets.token_urlsafe(16))
 
 

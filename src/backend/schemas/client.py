@@ -18,9 +18,6 @@ from pydantic import (
 from backend.models.enums import ClientStatusEnum, RoleEnum
 
 
-# ==========================================
-# Client (Tenant) DTOs
-# ==========================================
 
 class ClientBase(BaseModel):
     name: str = Field(
@@ -107,9 +104,6 @@ class ClientRead(ClientBase):
     model_config = ConfigDict(from_attributes=True)
 
 
-# ==========================================
-# User DTOs
-# ==========================================
 
 class UserBase(BaseModel):
     email: EmailStr
@@ -167,9 +161,6 @@ class UserRead(UserBase):
     model_config = ConfigDict(from_attributes=True)
 
 
-# ==========================================
-# Authentication & Tenant Onboarding
-# ==========================================
 
 class RegisterRequest(BaseModel):
     organization_name: str = Field(

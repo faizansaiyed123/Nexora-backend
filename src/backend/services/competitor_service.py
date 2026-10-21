@@ -36,7 +36,6 @@ class CompetitorService:
 
         await acquire_tenant_lock(db, client_id, "competitor_quota")
 
-        # Get the client so we can enforce its limits.
         client_result = await db.execute(
             select(ClientModel).where(ClientModel.id == client_id)
         )
@@ -48,7 +47,6 @@ class CompetitorService:
                 code="CLIENT_NOT_FOUND",
             )
 
-        # Check competitor limit.
         count_result = await db.execute(
             select(func.count(CompetitorModel.id)).where(
                 CompetitorModel.client_id == client_id
@@ -63,7 +61,6 @@ class CompetitorService:
                 code="COMPETITOR_LIMIT_REACHED",
             )
 
-        # Check for duplicate domain within this client.
         existing_result = await db.execute(
             select(CompetitorModel).where(
                 CompetitorModel.client_id == client_id,
@@ -149,8 +146,6 @@ class CompetitorService:
 
         update_data = data.model_dump(exclude_unset=True)
 
-        # If domain is being changed, make sure the new domain
-        # doesn't already belong to another competitor in this client.
         if "domain" in update_data and update_data["domain"] != competitor.domain:
             existing_result = await db.execute(
                 select(CompetitorModel).where(

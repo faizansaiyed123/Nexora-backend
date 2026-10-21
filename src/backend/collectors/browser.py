@@ -58,7 +58,6 @@ async def render_page(url: str, timeout_seconds: int = 20) -> Optional[str]:
                         try:
                             await page.wait_for_load_state("networkidle", timeout=timeout_seconds * 1000)
                         except Exception:
-                            # networkidle can hang on long-polling pages; domcontentloaded is enough.
                             pass
                         return await page.content()
                     finally:

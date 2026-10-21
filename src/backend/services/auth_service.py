@@ -141,15 +141,11 @@ class AuthService:
                 email=clean_email,
             )
         except Exception:
-            # Redis unavailable: token is still embedded in the verification
-            # email link, so the user can verify once they click it.
             logger.warning(
                 "Redis unavailable: email verification token not persisted for user %s",
                 user.id,
             )
 
-        # Send the verification email in the background so a slow or failed
-        # SMTP connection never blocks the registration response.
         asyncio.create_task(
             _send_verification_email_bg(
                 clean_email,
@@ -249,9 +245,6 @@ class AuthService:
                     code="USER_NOT_FOUND",
                 )
         else:
-            # Redis unavailable or token expired: fall back to verifying the
-            # most recent unverified account. This keeps the serverless /
-            # SQLite-only deployment usable without Redis.
             result = await session.execute(
                 select(UserModel).where(
                     UserModel.email_verified.is_(False),
@@ -319,7 +312,6 @@ class AuthService:
                 code="ACCOUNT_DISABLED",
             )
 
-        # Email verification is required before login.
         if not user.email_verified:
             raise AuthenticationException(
                 "Please verify your email address before logging in.",
@@ -356,8 +348,6 @@ class AuthService:
                 token_hash=hash_token(raw_refresh_token),
             )
         except RuntimeError:
-            # Redis unavailable: refresh tokens are not persisted. Access
-            # tokens still work; refresh will require re-login.
             logger.warning("Redis unavailable: refresh session not persisted for user %s", user.id)
 
         return user, access_token, refresh_token_payload, expires_in
@@ -474,10 +464,6 @@ class AuthService:
                     reset_token,
                 )
             except Exception:
-                # Email delivery failure must not turn a valid reset request
-                # into a 500, and must not reveal whether the account exists.
-                # The token is already stored, so the reset link remains
-                # usable if the operator later configures SMTP.
                 logger.exception(
                     "Password reset email could not be delivered for user %s",
                     user.id,

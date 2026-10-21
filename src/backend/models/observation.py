@@ -84,7 +84,6 @@ class JobModel(Base):
         ),
     )
 
-    # Relationships
     source: Mapped["SourceModel"] = relationship("SourceModel", back_populates="jobs")
     observations: Mapped[List["ObservationModel"]] = relationship(
         "ObservationModel", back_populates="job", cascade="all, delete-orphan"
@@ -124,7 +123,6 @@ class ObservationModel(Base):
         index=True,
     )
 
-    # Relationships
     offering_match: Mapped["OfferingMatchModel"] = relationship("OfferingMatchModel", back_populates="observations")
     job: Mapped[Optional["JobModel"]] = relationship("JobModel", back_populates="observations")
 
@@ -162,5 +160,4 @@ class SnapshotModel(Base):
         nullable=False,
     )
 
-    # Relationship
     offering_match: Mapped["OfferingMatchModel"] = relationship("OfferingMatchModel", back_populates="snapshot")
