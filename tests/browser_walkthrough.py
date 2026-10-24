@@ -755,6 +755,78 @@ def main():
         assert viewer_write.status==403,viewer_write.text()
         shot(page,"44-viewer-read-only-workspace.png")
 
+        # Super-admin controls are available and the server authorizes a real write.
+        super_admin_email=create_role_user_sync(client_id,RoleEnum.SUPER_ADMIN,suffix)
+        logout(page)
+        login(page,super_admin_email,ROLE_PASSWORD)
+        page.get_by_role("link",name="Competitors",exact=True).click()
+        page.get_by_role("button",name="Add competitor",exact=True).wait_for()
+        super_admin_create=submit(page,"Save competitor","/v1/competitors").json() if False else None
+        page.get_by_role("button",name="Add competitor",exact=True).click()
+        page.get_by_label("Name").fill("Super Admin Review Competitor")
+        page.get_by_label("Domain").fill("super-admin-"+suffix+".example")
+        super_admin_create=submit(page,"Save competitor","/v1/competitors").json()
+        assert super_admin_create["name"]=="Super Admin Review Competitor",super_admin_create
+        assert any(row["id"]==super_admin_create["id"] for row in get_api(page,"/v1/competitors"))
+        shot(page,"45-super-admin-workspace.png")
+
+        # Create a second tenant through the public registration and real mail-verification
+        # flow; prove its records and permissions are separate from the original tenant.
+        isolated_suffix=uuid.uuid4().hex[:8]
+        isolated_email=f"isolated-owner-{isolated_suffix}@northstar.example.com"
+        isolated_org=f"Contoso Audio Intelligence {isolated_suffix}"
+        logout(page)
+        page.goto(FRONTEND+"/register",wait_until="networkidle")
+        page.get_by_label("Organization name").fill(isolated_org)
+        page.get_by_label("Your full name").fill("Jordan Lee")
+        page.get_by_label("Work email").fill(isolated_email)
+        page.locator('input[autocomplete="new-password"]').fill(PASSWORD)
+        isolated_mail_start=len(emails())
+        isolated_registration=submit(page,"Create workspace","/v1/auth/register",status=201).json()
+        assert isolated_registration["email_verification_required"] is True,isolated_registration
+        isolated_verify_url=email_link(wait_email("Verify your Nexora account",isolated_email,isolated_mail_start),"verify-email")
+        page.goto(isolated_verify_url,wait_until="networkidle")
+        isolated_verified=submit(page,"Verify email","/v1/auth/verify-email","GET",200)
+        assert isolated_verified.json().get("message"),isolated_verified.text()
+        page.get_by_role("link",name="Continue to sign in",exact=True).click()
+        login(page,isolated_email,PASSWORD)
+        isolated_identity=get_api(page,"/v1/auth/me")
+        isolated_client_id=uuid.UUID(isolated_identity["client_id"])
+        assert isolated_client_id != client_id,"Separate organizations must receive separate tenant IDs."
+        isolated_competitors=get_api(page,"/v1/competitors")
+        isolated_offerings=get_api(page,"/v1/offerings?page=1&page_size=50")
+        isolated_alerts=get_api(page,"/v1/alerts/rules")
+        isolated_jobs=get_api(page,"/v1/jobs")
+        assert isolated_competitors==[],isolated_competitors
+        assert isolated_offerings["total_count"]==0,isolated_offerings
+        assert isolated_alerts==[],isolated_alerts
+        assert isolated_jobs==[],isolated_jobs
+        foreign_competitor=page.request.get(API+f"/v1/competitors/{competitor_id}",headers={"Authorization":"Bearer "+token(page)})
+        foreign_offering=page.request.get(API+f"/v1/offerings/{offering_id}",headers={"Authorization":"Bearer "+token(page)})
+        assert foreign_competitor.status==404,foreign_competitor.text()
+        assert foreign_offering.status==404,foreign_offering.text()
+        page.get_by_role("heading",name="Know what changed before the market tells you.",exact=True).wait_for()
+        shot(page,"46-isolated-tenant-dashboard.png")
+
+        page.get_by_role("link",name="Competitors",exact=True).click()
+        page.get_by_text("No competitors configured",exact=True).wait_for()
+        assert get_api(page,"/v1/competitors")==[]
+        shot(page,"47-isolated-tenant-competitors.png")
+
+        page.get_by_role("link",name="Offerings",exact=True).click()
+        page.get_by_text("Your catalog is empty",exact=True).wait_for()
+        assert get_api(page,"/v1/offerings?page=1&page_size=50")["total_count"]==0
+        shot(page,"48-isolated-tenant-catalog.png")
+
+        page.get_by_role("link",name="Alerts",exact=True).click()
+        page.get_by_text("No rules configured",exact=True).wait_for()
+        assert get_api(page,"/v1/alerts/rules")==[]
+        shot(page,"49-isolated-tenant-alerts.png")
+
+        # Return to the first tenant before mobile checks.
+        logout(page)
+        login(page,EMAIL,RESET_PASSWORD)
+
         # Check the authenticated workspace and the logged-out public entry separately.
         mobile_dashboard=context.new_page()
         mobile_dashboard.set_viewport_size({"width":390,"height":844})
@@ -771,7 +843,7 @@ def main():
           .sort((a,b)=>b.right-a.right).slice(0,30)""")
         print("MOBILE_DASHBOARD_DIAGNOSTICS "+json.dumps({"dimensions":dashboard_dimensions,"elements":dashboard_overflow}),flush=True)
         assert dashboard_dimensions["content"]<=dashboard_dimensions["viewport"],{"dimensions":dashboard_dimensions,"overflow":dashboard_overflow}
-        shot(mobile_dashboard,"45-mobile-dashboard.png")
+        shot(mobile_dashboard,"50-mobile-dashboard.png")
 
         mobile_context=browser.new_context(viewport={"width":390,"height":844})
         mobile=mobile_context.new_page()
@@ -788,7 +860,7 @@ def main():
           .sort((a,b)=>b.right-a.right).slice(0,30)""")
         print("MOBILE_HOME_DIAGNOSTICS "+json.dumps({"dimensions":home_dimensions,"elements":home_overflow}),flush=True)
         assert home_dimensions["content"]<=home_dimensions["viewport"],{"dimensions":home_dimensions,"overflow":home_overflow}
-        shot(mobile,"46-mobile-homepage.png")
+        shot(mobile,"51-mobile-homepage.png")
         mobile_context.close()
         assert not BROWSER_ERRORS,"Frontend JavaScript errors: "+" | ".join(BROWSER_ERRORS)
         expected_names=[f"{i:02d}-"+name for i,name in [
@@ -803,7 +875,9 @@ def main():
             (32,"collection-job-details.png"),(33,"private-target-blocked.png"),(34,"discovery-product-created.png"),(35,"discovery-update-history.png"),
             (36,"workspace-settings.png"),(37,"workspace-profile-saved.png"),(38,"password-changed.png"),(39,"password-reset-requested.png"),
             (40,"password-reset-form.png"),(41,"password-reset-complete.png"),(42,"dashboard-after-reset.png"),(43,"analyst-workspace.png"),
-            (44,"viewer-read-only-workspace.png"),(45,"mobile-dashboard.png"),(46,"mobile-homepage.png"),
+            (44,"viewer-read-only-workspace.png"),(45,"super-admin-workspace.png"),(46,"isolated-tenant-dashboard.png"),
+            (47,"isolated-tenant-competitors.png"),(48,"isolated-tenant-catalog.png"),(49,"isolated-tenant-alerts.png"),
+            (50,"mobile-dashboard.png"),(51,"mobile-homepage.png"),
         ]]
         expected_names += ["13b-source-js-rendering-enabled.png","22b-bulk-import-row-errors.png","23b-single-offering-archived.png","23c-catalog-pagination.png","23d-catalog-type-filter.png","29b-circuit-breaker-rule-form.png","29c-source-circuit-open.png","29d-circuit-breaker-alert.png"]
         missing=[name for name in expected_names if not (SHOTS/name).is_file()]
