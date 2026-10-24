@@ -4,10 +4,12 @@ from __future__ import annotations
 import uuid
 
 import pytest
+import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from backend.api.v1 import collections as collections_route
 from backend.core.config import get_settings
+from backend.core import rate_limit as rate_limit_module
 from backend.main import app
 from backend.services.collection_service import CollectionResult, CollectionService
 
@@ -15,9 +17,25 @@ from backend.services.collection_service import CollectionResult, CollectionServ
 PASSWORD = "Nexora-Circuit!2026"
 
 
+@pytest_asyncio.fixture
+async def isolated_redis_client():
+    """Keep the async Redis pool bound to this test's event loop only."""
+    # The application keeps one client per production process. Pytest creates a
+    # fresh event loop for each async test, so reset and close the pool here.
+    rate_limit_module._redis_client = None
+    yield
+    client = rate_limit_module._redis_client
+    try:
+        if client is not None:
+            await client.aclose()
+    finally:
+        rate_limit_module._redis_client = None
+
+
 @pytest.mark.asyncio
 async def test_circuit_breaker_trip_creates_a_persistent_alert(
     monkeypatch: pytest.MonkeyPatch,
+    isolated_redis_client: None,
 ) -> None:
     async def failed_collect(
         self,
