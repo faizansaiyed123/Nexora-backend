@@ -10,6 +10,8 @@ import asyncio
 import json
 import os
 import re
+import subprocess
+import sys
 import time
 import uuid
 from email import message_from_string
@@ -18,13 +20,6 @@ from urllib.parse import urlparse
 
 from playwright.sync_api import Browser, Page, sync_playwright
 from sqlalchemy import select
-
-from backend.core.security import get_password_hash
-from backend.db.session import AsyncSessionLocal
-from backend.models.client import UserModel
-from backend.models.enums import RoleEnum
-from backend.models.notification import NotificationOutboxModel
-from backend.workers.tasks import dispatch_pending_notifications
 
 FRONTEND = os.getenv("NEXORA_FRONTEND_URL", "http://127.0.0.1:4173").rstrip("/")
 API = os.getenv("NEXORA_API_URL", "http://127.0.0.1:8000").rstrip("/")
@@ -65,7 +60,7 @@ def shot(page: Page, name: str) -> None:
 def choose(page: Page, field_name: str, option_name: str) -> None:
     field = page.locator("label.field").filter(has_text=field_name).last
     field.locator("button.select-trigger").click()
-    page.get_by_role("option", name=option_name, exact=True).last.click()
+    page.get_by_role("option", name=re.compile(re.escape(option_name))).last.click()
 
 
 def token(page: Page) -> str:
@@ -156,38 +151,21 @@ def message_link(body: str, route: str) -> str:
     return match.group(0).rstrip(".,);")
 
 
-async def add_role_user(client_id: uuid.UUID, role: RoleEnum, label: str) -> str:
-    email = f"{role.value.lower()}-{label}@northstar.example.com"
-    async with AsyncSessionLocal() as session:
-        existing = await session.scalar(
-            select(UserModel).where(UserModel.email == email)
-        )
-        if existing:
-            return email
-        session.add(
-            UserModel(
-                client_id=client_id,
-                email=email,
-                full_name=f"Northstar {role.value.title()}",
-                hashed_password=get_password_hash(ROLE_PASSWORD),
-                role=role,
-                is_active=True,
-                email_verified=True,
-            )
-        )
-        await session.commit()
+def helper(*args: str) -> str:
+    result = subprocess.run(
+        [sys.executable, "tests/ci_helpers.py", *args],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+    return result.stdout.strip()
+
+
+def add_role_user(client_id: uuid.UUID, role: str, label: str) -> str:
+    email = f"{role.lower()}-{label}@northstar.example.com"
+    helper("seed-role", str(client_id), role, email)
     return email
-
-
-async def sent_notification_statuses(client_id: uuid.UUID) -> list[str]:
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(NotificationOutboxModel.status).where(
-                NotificationOutboxModel.client_id == client_id,
-                NotificationOutboxModel.channel == "email",
-            )
-        )
-        return list(result.scalars().all())
 
 
 def login_ui(page: Page, email: str, password: str) -> None:
@@ -597,13 +575,13 @@ def main() -> None:
         assert any(item["id"] == log["id"] and item["is_read"] for item in logs_after)
 
         mail_offset = len(read_mailbox())
-        dispatch = dispatch_pending_notifications.run()
+        dispatch = json.loads(helper("dispatch-notifications"))
         assert int(dispatch.get("sent", 0)) >= 1, dispatch
         _, alert_body = wait_mail(
             "Nexora Competitive Alert: Competitor price dropped", EMAIL, mail_offset
         )
         assert "Nexora detected a competitive intelligence event" in alert_body
-        status_rows = asyncio.run(sent_notification_statuses(client_id))
+        status_rows = json.loads(helper("notification-statuses", str(client_id)))
         assert "SENT" in status_rows, status_rows
         shot(page, "26-alert-triggered-and-read.png")
 
@@ -730,8 +708,8 @@ def main() -> None:
 
         # Role-aware UI and server permissions use persisted users and genuine tokens.
         role_suffix = uuid.uuid4().hex[:10]
-        viewer_email = asyncio.run(add_role_user(client_id, RoleEnum.VIEWER, role_suffix))
-        analyst_email = asyncio.run(add_role_user(client_id, RoleEnum.ANALYST, role_suffix))
+        viewer_email = add_role_user(client_id, "VIEWER", role_suffix)
+        analyst_email = add_role_user(client_id, "ANALYST", role_suffix)
 
         logout_ui(page)
         login_ui(page, analyst_email, ROLE_PASSWORD)
