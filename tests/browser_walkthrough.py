@@ -450,7 +450,7 @@ def main():
         assert get_api(page,"/v1/auth/profile")["company_name"]=="Northstar Analytics"
         shot(page,"37-workspace-profile-saved.png")
         page.get_by_label("Current password").fill(PASSWORD)
-        page.get_by_label("New password").fill(CHANGED_PASSWORD)
+        page.locator('input[autocomplete="new-password"]').fill(CHANGED_PASSWORD)
         submit(page,"Update password","/v1/auth/change-password",status=200)
         old_login=page.request.post(API+"/v1/auth/login",data=json.dumps({"email":EMAIL,"password":PASSWORD}),headers={"Content-Type":"application/json"})
         assert old_login.status==401,old_login.text()
@@ -468,7 +468,7 @@ def main():
         page.goto(reset_url,wait_until="networkidle")
         page.get_by_label("New password").wait_for()
         shot(page,"40-password-reset-form.png")
-        page.get_by_label("New password").fill(RESET_PASSWORD)
+        page.locator('input[autocomplete="new-password"]').fill(RESET_PASSWORD)
         submit(page,"Update password","/v1/auth/reset-password",status=200)
         page.get_by_role("heading",name="Password updated",exact=True).wait_for()
         shot(page,"41-password-reset-complete.png")
