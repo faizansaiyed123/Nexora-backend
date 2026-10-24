@@ -666,7 +666,7 @@ def main() -> None:
         sign_in(page, analyst, ROLE_PASSWORD)
         assert api_get(page, "/v1/auth/me")["role"] == "ANALYST"
         page.get_by_role("link", name="Competitors", exact=True).click()
-        page.get_by_role("heading", name="Competitors", exact=True).wait_for()
+        page.locator(".content h2").filter(has_text="Competitors").wait_for()
         assert page.get_by_role("button", name="Add competitor", exact=True).count() == 0
         denied = page.request.post(API_URL + "/v1/competitors",
             headers={"Authorization": f"Bearer {token(page)}", "Content-Type": "application/json"},
@@ -682,7 +682,7 @@ def main() -> None:
         sign_in(page, viewer, ROLE_PASSWORD)
         assert api_get(page, "/v1/auth/me")["role"] == "VIEWER"
         page.get_by_role("link", name="Offerings", exact=True).click()
-        page.get_by_role("heading", name="Offerings", exact=True).wait_for()
+        page.locator(".content h2").filter(has_text="Offerings").wait_for()
         assert page.get_by_role("button", name="Add offering", exact=True).count() == 0
         assert page.get_by_role("button", name="Bulk import", exact=True).count() == 0
         assert page.get_by_role("button", name="Dynamic fields", exact=True).count() == 0
