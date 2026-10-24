@@ -107,6 +107,11 @@ def _normalize_currency(value: Any) -> Optional[str]:
         code = match.group(0).upper()
         if code in _ISO_CURRENCIES:
             return code
+    # Currency selectors sometimes return a formatted value such as "₹ 22,990"
+    # rather than a standalone ISO code or symbol.
+    for symbol, code in sorted(_SYMBOL_MAP.items(), key=lambda item: len(item[0]), reverse=True):
+        if symbol in text:
+            return code
     return None
 
 
@@ -300,6 +305,7 @@ def _extract_with_custom_selectors(
     image_sel = custom_selectors.get("image_selector")
     description_sel = custom_selectors.get("description_selector")
 
+    price_contexts: list[str] = []
     if price_sel:
         for el in soup.select(str(price_sel)):
             val = _get_text(el)
@@ -307,12 +313,31 @@ def _extract_with_custom_selectors(
             if p is not None and p > 0:
                 result.price = p
                 result.attributes["price_selector"] = str(price_sel)
+                price_contexts = [val]
+                if getattr(el, "parent", None) is not None:
+                    price_contexts.append(_get_text(el.parent))
+                    if getattr(el.parent, "parent", None) is not None:
+                        price_contexts.append(_get_text(el.parent.parent))
                 break
 
     if currency_sel:
         el = soup.select_one(str(currency_sel))
         if el:
-            result.currency = _normalize_currency(_get_text(el))
+            currency_value = (
+                _get_attr(el, "content", "data-currency", "currency", "value")
+                or _get_text(el)
+            )
+            result.currency = _normalize_currency(currency_value)
+
+    # Price and currency are often adjacent in storefront markup: a data-price
+    # element may contain only digits while its parent contains the currency symbol.
+    # Infer from the selected price and its nearest containers before accepting an
+    # unknown currency and before the API has to consider any configured fallback.
+    if result.currency is None:
+        for context in price_contexts:
+            result.currency = _normalize_currency(context) or _detect_currency_from_text(context)
+            if result.currency:
+                break
 
     if availability_sel:
         el = soup.select_one(str(availability_sel))
@@ -712,6 +737,7 @@ def _extract_html_selectors(soup: BeautifulSoup, base_url: str) -> ExtractionRes
         ".current-price",
         ".offer-price",
     ]
+    price_contexts: list[str] = []
     for selector in price_selectors:
         for el in soup.select(selector):
             val = (
@@ -725,6 +751,11 @@ def _extract_html_selectors(soup: BeautifulSoup, base_url: str) -> ExtractionRes
             p = _parse_price(val)
             if p is not None and p > 0:
                 result.price = p
+                price_contexts = [str(val), el.get_text(" ", strip=True)]
+                if getattr(el, "parent", None) is not None:
+                    price_contexts.append(_get_text(el.parent))
+                    if getattr(el.parent, "parent", None) is not None:
+                        price_contexts.append(_get_text(el.parent.parent))
                 break
         if result.price is not None:
             break
@@ -732,8 +763,18 @@ def _extract_html_selectors(soup: BeautifulSoup, base_url: str) -> ExtractionRes
     if result.currency is None:
         el = soup.select_one('[itemprop="priceCurrency"]')
         if el:
-            val = el.get("content") or el.get_text(strip=True)
+            val = (
+                el.get("content")
+                or el.get("data-currency")
+                or el.get_text(strip=True)
+            )
             result.currency = _normalize_currency(val)
+
+    if result.currency is None:
+        for context in price_contexts:
+            result.currency = _normalize_currency(context) or _detect_currency_from_text(context)
+            if result.currency:
+                break
 
     if result.availability is None:
         availability_selectors = [
