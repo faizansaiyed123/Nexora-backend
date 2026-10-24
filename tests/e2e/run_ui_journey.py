@@ -582,8 +582,8 @@ def main() -> None:
         assert event.value.status == 200, event.value.text()
         assert api_get(page, "/v1/auth/profile")["company_name"] == "Northstar Analytics"
         shot(page, "38-workspace-profile-saved.png")
-        page.get_by_label("Current password").fill(PASSWORD)
-        page.get_by_label("New password").fill(CHANGED_PASSWORD)
+        page.locator('input[autocomplete="current-password"]').fill(PASSWORD)
+        page.locator('input[autocomplete="new-password"]').fill(CHANGED_PASSWORD)
         with page.expect_response(lambda r: r.url.endswith("/v1/auth/change-password") and r.request.method == "POST") as event:
             page.get_by_role("button", name="Update password", exact=True).click()
         assert event.value.status == 200, event.value.text()
@@ -606,9 +606,9 @@ def main() -> None:
         _, reset_body = wait_mail("Reset your Nexora password", EMAIL, before_reset_mail)
         reset_url = mail_link(reset_body, "reset-password")
         page.goto(reset_url, wait_until="networkidle")
-        page.get_by_label("New password").wait_for()
+        page.locator('input[autocomplete="new-password"]').wait_for()
         shot(page, "41-reset-form.png")
-        page.get_by_label("New password").fill(RESET_PASSWORD)
+        page.locator('input[autocomplete="new-password"]').fill(RESET_PASSWORD)
         with page.expect_response(lambda r: r.url.endswith("/v1/auth/reset-password") and r.request.method == "POST") as event:
             page.get_by_role("button", name="Update password", exact=True).click()
         assert event.value.status == 200, event.value.text()
