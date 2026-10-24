@@ -705,9 +705,13 @@ def main():
         logout(page)
         page.get_by_role("link",name="Forgot password?",exact=True).click()
         page.get_by_role("heading",name="Reset access without losing your workspace.",exact=True).wait_for(timeout=10000)
-        reset_email=page.get_by_label("Work email",exact=True)
-        reset_email.fill(EMAIL)
+        reset_email=page.locator('form input[type="email"]').last
+        reset_email.wait_for(state="visible",timeout=10000)
+        reset_email.fill("")
+        reset_email.type(EMAIL,delay=8)
+        reset_email.press("Tab")
         assert reset_email.input_value()==EMAIL, "Password recovery email was not entered into the recovery form."
+        print("PASSWORD_RESET_EMAIL_INPUT "+reset_email.input_value(),flush=True)
         reset_start=len(emails())
         submit(page,"Send reset link","/v1/auth/forgot-password",status=200)
         page.get_by_role("heading",name="Check your inbox",exact=True).wait_for()
