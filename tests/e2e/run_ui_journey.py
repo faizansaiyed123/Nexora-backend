@@ -482,7 +482,7 @@ def main() -> None:
         page.get_by_label("Rule name").fill("Sony retail price drop")
         choose(page, "Alert type", "PERCENTAGE_DROP")
         choose(page, "Offering scope", OFFERING)
-        page.get_by_label("Threshold").fill("10")
+        page.get_by_role("spinbutton", name="Threshold").fill("10")
         page.get_by_label("Cooldown (minutes)").fill("60")
         shot(page, "28-alert-rule-form.png")
         with page.expect_response(lambda r: r.url.endswith("/v1/alerts/rules") and r.request.method == "POST") as event:
