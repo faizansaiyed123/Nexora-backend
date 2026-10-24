@@ -613,7 +613,11 @@ def main() -> None:
         # Reset link is delivered, consumed once, then the new password signs in via UI.
         sign_out(page)
         page.get_by_role("link", name="Forgot password?", exact=True).click()
-        page.get_by_label("Work email").fill(EMAIL)
+        page.wait_for_url("**/forgot-password", timeout=10000)
+        page.get_by_role("heading", name="Reset access without losing your workspace.", exact=True).wait_for()
+        reset_email = page.get_by_label("Work email")
+        reset_email.fill(EMAIL)
+        assert reset_email.input_value() == EMAIL
         before_reset_mail = len(mailbox())
         with page.expect_response(lambda r: r.url.endswith("/v1/auth/forgot-password") and r.request.method == "POST") as event:
             page.get_by_role("button", name="Send reset link", exact=True).click()
