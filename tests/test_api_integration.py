@@ -12,6 +12,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
+from backend.core.config import get_settings
 from backend.core.security import get_password_hash
 from backend.core.rate_limit import TokenSessionStore
 from backend.db.session import AsyncSessionLocal
@@ -104,6 +105,7 @@ async def test_full_tenant_api_and_database_workflow() -> None:
             raise RuntimeError("Redis unavailable for regression test")
 
         with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(get_settings(), "email_verification_bypass", False)
             patch.setattr(TokenSessionStore, "store_email_verification_token", fail_verification_store)
             failed_registration = await client.post(
                 "/v1/auth/register",
