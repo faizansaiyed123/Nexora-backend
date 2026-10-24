@@ -7,6 +7,7 @@ only for its isolated test database so onboarding does not require an external i
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -19,7 +20,8 @@ from backend.db.session import AsyncSessionLocal
 from backend.main import app
 from backend.models.alert import AlertLogModel
 from backend.models.client import UserModel
-from backend.models.enums import RoleEnum
+from backend.models.enums import JobStatusEnum, JobTypeEnum, RoleEnum
+from backend.models.observation import JobModel
 
 
 INITIAL_PASSWORD = "Nexora-Strong!2026"
@@ -308,6 +310,33 @@ async def test_full_tenant_api_and_database_workflow() -> None:
         )
         assert edited.status_code == 200, edited.text
         assert float(edited.json()["current_price"]) == 2299.0
+        updated_detail = await client.get(
+            f"/v1/offerings/{offering_id}", headers=headers
+        )
+        assert updated_detail.status_code == 200, updated_detail.text
+        assert updated_detail.json()["attributes"]["included_hosts"] == 150
+        assert updated_detail.json()["attributes"]["support_tier"] == "Premium"
+
+        # Search, market/category/currency/price filters and pagination must agree.
+        filtered_range = await client.get(
+            "/v1/offerings",
+            headers=headers,
+            params={
+                "category": "Observability",
+                "market": "US",
+                "currency": "USD",
+                "min_price": "2000",
+                "max_price": "2300",
+                "page": 1,
+                "page_size": 1,
+            },
+        )
+        assert filtered_range.status_code == 200, filtered_range.text
+        filtered_payload = filtered_range.json()
+        assert filtered_payload["total_count"] == 1, filtered_payload
+        assert len(filtered_payload["items"]) == 1
+        assert filtered_payload["items"][0]["id"] == offering_id
+        assert filtered_payload["items"][0]["has_more"] if "has_more" in filtered_payload["items"][0] else True
 
         monitor = await client.post(
             f"/v1/offerings/{offering_id}/toggle-monitoring",
@@ -397,6 +426,57 @@ async def test_full_tenant_api_and_database_workflow() -> None:
         assert archive_bulk.status_code == 200, archive_bulk.text
         assert archive_bulk.json()["archived_count"] == 2, archive_bulk.text
 
+        # Mixed bulk import reports row-level failures without discarding valid rows.
+        edge_suffix = uuid.uuid4().hex[:10]
+        edge_name = f"Bulk Partial Recovery {edge_suffix}"
+        partial_import = await client.post(
+            "/v1/offerings/bulk",
+            headers=headers,
+            json={
+                "items": [
+                    {
+                        "name": edge_name,
+                        "offering_type": "PRODUCT",
+                        "sku": f"EDGE-OK-{edge_suffix}",
+                        "current_price": "19.95",
+                        "currency": "USD",
+                        "market": "US",
+                        "url": "https://example.com/products/edge-case",
+                        "category": "Integration > Bulk Import",
+                    },
+                    {
+                        "name": f"Blocked Bulk Row {edge_suffix}",
+                        "offering_type": "PRODUCT",
+                        "sku": f"EDGE-BLOCKED-{edge_suffix}",
+                        "current_price": "29.95",
+                        "currency": "USD",
+                        "market": "US",
+                        "url": "http://127.0.0.1:8000/v1/health",
+                    },
+                ]
+            },
+        )
+        assert partial_import.status_code == 200, partial_import.text
+        assert partial_import.json()["total_processed"] == 2, partial_import.text
+        assert partial_import.json()["successful_count"] == 1, partial_import.text
+        assert partial_import.json()["failed_count"] == 1, partial_import.text
+        assert partial_import.json()["errors"][0]["index"] == 1, partial_import.text
+        edge_readback = await client.get(
+            "/v1/offerings",
+            headers=headers,
+            params={"q": edge_name, "page": 1, "page_size": 5},
+        )
+        assert edge_readback.status_code == 200, edge_readback.text
+        assert edge_readback.json()["total_count"] == 1, edge_readback.text
+        edge_id = edge_readback.json()["items"][0]["id"]
+        edge_archive = await client.post(
+            "/v1/offerings/bulk-archive",
+            headers=headers,
+            json={"offering_ids": [edge_id]},
+        )
+        assert edge_archive.status_code == 200, edge_archive.text
+        assert edge_archive.json()["archived_count"] == 1, edge_archive.text
+
         exported_json = await client.get(
             "/v1/offerings/export", headers=headers, params={"format": "json"}
         )
@@ -407,6 +487,10 @@ async def test_full_tenant_api_and_database_workflow() -> None:
         )
         assert exported_csv.status_code == 200, exported_csv.text
         assert "Sentinel Observability Enterprise" in exported_csv.text
+        unsupported_export = await client.get(
+            "/v1/offerings/export", headers=headers, params={"format": "xml"}
+        )
+        assert unsupported_export.status_code == 422, unsupported_export.text
 
         # Link catalog item to a competitor source and verify match CRUD.
         match_response = await client.post(
@@ -436,6 +520,49 @@ async def test_full_tenant_api_and_database_workflow() -> None:
         )
         assert match_update.status_code == 200, match_update.text
         assert match_update.json()["match_status"] == "SUGGESTED"
+        match_detail = await client.get(
+            f"/v1/offering-matches/{match_id}", headers=headers
+        )
+        assert match_detail.status_code == 200, match_detail.text
+        assert match_detail.json()["match_status"] == "SUGGESTED"
+        duplicate_match = await client.post(
+            "/v1/offering-matches",
+            headers=headers,
+            json={
+                "offering_id": offering_id,
+                "source_id": source_id,
+                "target_url": "https://www.datadoghq.com/pricing/",
+                "match_status": "APPROVED",
+                "confidence_score": 0.98,
+            },
+        )
+        assert duplicate_match.status_code == 400, duplicate_match.text
+
+        # Exercise the individual job-detail read route with a persisted job row.
+        finished_at = datetime.now(timezone.utc)
+        async with AsyncSessionLocal() as session:
+            job_row = JobModel(
+                source_id=uuid.UUID(source_id),
+                job_type=JobTypeEnum.ON_DEMAND_REFRESH,
+                status=JobStatusEnum.COMPLETED,
+                started_at=finished_at,
+                completed_at=finished_at,
+                total_items_processed=1,
+                successful_items=1,
+                failed_items=0,
+                meta_info={"origin": "postgresql-api-integration"},
+            )
+            session.add(job_row)
+            await session.commit()
+            await session.refresh(job_row)
+            job_id = str(job_row.id)
+        job_detail = await client.get(f"/v1/jobs/{job_id}", headers=headers)
+        assert job_detail.status_code == 200, job_detail.text
+        assert job_detail.json()["id"] == job_id
+        assert job_detail.json()["status"] == "COMPLETED"
+        job_list = await client.get("/v1/jobs", headers=headers)
+        assert job_list.status_code == 200, job_list.text
+        assert any(row["id"] == job_id for row in job_list.json())
 
         # Alert rules and persistent event-read state.
         rule_response = await client.post(
@@ -512,6 +639,30 @@ async def test_full_tenant_api_and_database_workflow() -> None:
         other_offerings = await client.get("/v1/offerings", headers=other_headers)
         assert other_offerings.status_code == 200, other_offerings.text
         assert other_offerings.json()["total_count"] == 0
+        for route in (
+            f"/v1/offerings/{offering_id}",
+            f"/v1/sources/{source_id}",
+            f"/v1/offering-matches/{match_id}",
+            f"/v1/jobs/{job_id}",
+        ):
+            foreign_read = await client.get(route, headers=other_headers)
+            assert foreign_read.status_code == 404, (
+                f"Cross-tenant read was not hidden for {route}: "
+                f"HTTP {foreign_read.status_code} {foreign_read.text}"
+            )
+        foreign_bulk_archive = await client.post(
+            "/v1/offerings/bulk-archive",
+            headers=other_headers,
+            json={"offering_ids": [offering_id]},
+        )
+        assert foreign_bulk_archive.status_code == 200, foreign_bulk_archive.text
+        assert foreign_bulk_archive.json()["archived_count"] == 0, foreign_bulk_archive.text
+        assert foreign_bulk_archive.json()["archived_ids"] == [], foreign_bulk_archive.text
+        still_active_in_owner = await client.get(
+            f"/v1/offerings/{offering_id}", headers=headers
+        )
+        assert still_active_in_owner.status_code == 200, still_active_in_owner.text
+        assert still_active_in_owner.json()["is_archived"] is False
 
         # The API enforces the same private-target/SSRF boundary for discovery.
         blocked_target = await client.post(
@@ -633,3 +784,7 @@ async def test_full_tenant_api_and_database_workflow() -> None:
         )
         assert archived_listing.status_code == 200, archived_listing.text
         assert any(row["id"] == offering_id and row["is_archived"] for row in archived_listing.json()["items"])
+        archived_toggle = await client.post(
+            f"/v1/offerings/{offering_id}/toggle-monitoring", headers=headers
+        )
+        assert archived_toggle.status_code == 400, archived_toggle.text
