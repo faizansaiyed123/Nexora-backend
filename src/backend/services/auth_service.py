@@ -141,11 +141,12 @@ class AuthService:
                 user_id=str(user.id),
                 email=clean_email,
             )
-        except Exception:
-            logger.warning(
-                "Redis unavailable: email verification token not persisted for user %s",
-                user.id,
-            )
+        except Exception as exc:
+            logger.exception("Email verification token could not be persisted.")
+            raise ServiceUnavailableException(
+                "Registration is temporarily unavailable. Please try again shortly.",
+                code="EMAIL_VERIFICATION_UNAVAILABLE",
+            ) from exc
 
         asyncio.create_task(
             _send_verification_email_bg(

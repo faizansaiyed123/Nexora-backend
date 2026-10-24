@@ -13,6 +13,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from backend.core.security import get_password_hash
+from backend.core.rate_limit import TokenSessionStore
 from backend.db.session import AsyncSessionLocal
 from backend.main import app
 from backend.models.alert import AlertLogModel
@@ -94,6 +95,31 @@ async def test_full_tenant_api_and_database_workflow() -> None:
         assert cors.headers.get("access-control-allow-origin") == "http://localhost:5173"
 
         assert (await client.get("/v1/competitors")).status_code == 401
+
+        # If the one-time verification token cannot be stored, registration must fail
+        # and roll back its tenant/user records instead of emailing a dead link.
+        unavailable_email = f"nexora-unavailable-{uuid.uuid4().hex[:12]}@example.com"
+
+        async def fail_verification_store(*args, **kwargs):
+            raise RuntimeError("Redis unavailable for regression test")
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(TokenSessionStore, "store_email_verification_token", fail_verification_store)
+            failed_registration = await client.post(
+                "/v1/auth/register",
+                json={
+                    "organization_name": "Uncommitted Workspace",
+                    "full_name": "Uncommitted User",
+                    "email": unavailable_email,
+                    "password": INITIAL_PASSWORD,
+                },
+            )
+        assert failed_registration.status_code == 503, failed_registration.text
+        async with AsyncSessionLocal() as session:
+            assert await session.scalar(
+                select(UserModel).where(UserModel.email == unavailable_email)
+            ) is None
+
         suffix = uuid.uuid4().hex[:10]
         admin_email, _ = await _register(
             client, suffix, f"Northstar Intelligence {suffix}"
