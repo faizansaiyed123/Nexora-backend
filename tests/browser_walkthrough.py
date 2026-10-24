@@ -258,7 +258,7 @@ async def main():
         super_admin = await session.scalar(select(UserModel).where(
             UserModel.email == super_admin_email, UserModel.client_id == tenant_id))
         assert competitor is not None and competitor.name == "Retail Product Reference", "Competitor not found in PostgreSQL."
-        assert source is not None and source.name == "Retail Product Listing", "Source not found in PostgreSQL."
+        assert source is not None and source.name == "Retail Product Listing Structured", "Updated source name was not saved in PostgreSQL."
         assert source.circuit_state == CircuitStateEnum.OPEN and source.failure_count >= 5, "Source circuit state was not saved."
         assert source.configuration is not None and source.configuration.max_retries == 1, "Source configuration was not saved."
         assert offering is not None and str(offering.current_price).startswith("429.99"), "Updated catalog price was not saved."
