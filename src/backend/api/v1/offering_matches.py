@@ -24,6 +24,7 @@ from backend.schemas.offering_match import (
     OfferingMatchUpdate,
 )
 from backend.services.offering_match_service import OfferingMatchService
+from backend.services.url_security import SecurityValidationError
 
 
 router = APIRouter(prefix="/offering-matches", tags=["Offering Matches"])
@@ -51,6 +52,11 @@ async def create_offering_match(
             client_id=auth_ctx.client_id,
             data=data,
         )
+    except SecurityValidationError:
+        # Keep prohibited or unsafe URLs on the shared 422 validation contract;
+        # SecurityValidationError subclasses ValueError and must not be treated
+        # as a missing/duplicate-match business error below.
+        raise
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
