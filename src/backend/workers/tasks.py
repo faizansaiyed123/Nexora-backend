@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import uuid
 from datetime import datetime, timedelta, timezone
 
 from celery import shared_task
+from celery.signals import worker_process_shutdown, worker_shutdown
 from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import selectinload
 
-from backend.db.session import AsyncSessionLocal
+from backend.db.session import AsyncSessionLocal, engine
 from backend.core.config import get_settings
 from backend.models.competitor import OfferingMatchModel, SourceModel
 from backend.models.offering import OfferingModel
@@ -20,6 +22,49 @@ from backend.services.collection_runner import CollectionRunner
 from backend.workers.email_tasks import send_competitive_alert_email_async
 
 settings = get_settings()
+
+
+# SQLAlchemy's asyncpg connection pool is bound to the event loop that created
+# each connection. Calling asyncio.run() for every Celery task closes that loop,
+# leaving pooled connections attached to a dead loop for the next task. A worker
+# process uses one long-lived loop for all its async database work.
+_worker_loop: asyncio.AbstractEventLoop | None = None
+_worker_loop_pid: int | None = None
+
+
+def _run_worker_async(coroutine):
+    global _worker_loop, _worker_loop_pid
+    pid = os.getpid()
+    if (
+        _worker_loop is None
+        or _worker_loop.is_closed()
+        or _worker_loop_pid != pid
+    ):
+        _worker_loop = asyncio.new_event_loop()
+        _worker_loop_pid = pid
+    asyncio.set_event_loop(_worker_loop)
+    return _worker_loop.run_until_complete(coroutine)
+
+
+def _close_worker_async_loop(**_kwargs) -> None:
+    global _worker_loop, _worker_loop_pid
+    loop = _worker_loop
+    if loop is None or loop.is_closed():
+        _worker_loop = None
+        _worker_loop_pid = None
+        return
+    try:
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(engine.dispose())
+    finally:
+        loop.close()
+        asyncio.set_event_loop(None)
+        _worker_loop = None
+        _worker_loop_pid = None
+
+
+worker_process_shutdown.connect(_close_worker_async_loop, weak=False)
+worker_shutdown.connect(_close_worker_async_loop, weak=False)
 
 
 async def _enqueue_monitored_match_jobs() -> list[str]:
@@ -100,7 +145,7 @@ async def _enqueue_monitored_match_jobs() -> list[str]:
 
 @shared_task(name="backend.workers.tasks.enqueue_monitored_match_jobs")
 def enqueue_monitored_match_jobs() -> dict[str, int]:
-    job_ids = asyncio.run(_enqueue_monitored_match_jobs())
+    job_ids = _run_worker_async(_enqueue_monitored_match_jobs())
     for job_id in job_ids:
         execute_collection_job.delay(job_id)
     return {"scheduled_jobs": len(job_ids)}
@@ -119,7 +164,7 @@ def execute_collection_job(self, job_id: str) -> str:
             job = await CollectionRunner().run(session, uuid.UUID(job_id))
             return job.status.value
 
-    return asyncio.run(run_job())
+    return _run_worker_async(run_job())
 
 
 async def _dispatch_pending_notifications(batch_size: int = 25) -> int:
@@ -203,4 +248,4 @@ async def _dispatch_pending_notifications(batch_size: int = 25) -> int:
 
 @shared_task(name="backend.workers.tasks.dispatch_pending_notifications")
 def dispatch_pending_notifications() -> dict[str, int]:
-    return {"sent": asyncio.run(_dispatch_pending_notifications())}
+    return {"sent": _run_worker_async(_dispatch_pending_notifications())}
