@@ -1,13 +1,13 @@
 """Nexora's complete browser journey: React UI -> FastAPI -> PostgreSQL and email."""
 from __future__ import annotations
-import asyncio, json, os, re, subprocess, sys, time, uuid
+import asyncio, json, os, re, subprocess, sys, threading, time, uuid
 from email import message_from_string
 from pathlib import Path
 from urllib.parse import urlparse
 from playwright.sync_api import Page, sync_playwright
 from sqlalchemy import select
 from backend.core.security import get_password_hash
-from backend.db.session import AsyncSessionLocal
+from backend.db.session import AsyncSessionLocal, engine
 from backend.models.client import UserModel
 from backend.models.enums import RoleEnum
 from backend.models.notification import NotificationOutboxModel
@@ -31,10 +31,27 @@ HIGH_URL="https://cdn.jsdelivr.net/gh/faizansaiyed123/Nexora-backend@main/tests/
 LOW_URL="https://cdn.jsdelivr.net/gh/faizansaiyed123/Nexora-backend@main/tests/fixtures/retail-price-low.html"
 DISCOVERY_URL="https://cdn.jsdelivr.net/gh/faizansaiyed123/Nexora-backend@main/tests/fixtures/retail-discovery-product.html"
 BROWSER_ERRORS=[]
-ASYNC_LOOP=asyncio.new_event_loop()
-
 def run_async(coro):
-    return ASYNC_LOOP.run_until_complete(coro)
+    """Run database coroutines on a dedicated loop outside Playwright's sync loop."""
+    outcome = {}
+
+    async def execute():
+        try:
+            outcome["value"] = await coro
+        except BaseException as exc:
+            outcome["error"] = exc
+        finally:
+            await engine.dispose()
+
+    def run():
+        asyncio.run(execute())
+
+    thread = threading.Thread(target=run, name="nexora-browser-db", daemon=True)
+    thread.start()
+    thread.join()
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["value"]
 
 def shot(page: Page, name: str):
     SHOTS.mkdir(parents=True,exist_ok=True)
