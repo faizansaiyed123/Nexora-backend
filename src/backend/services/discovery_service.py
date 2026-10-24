@@ -84,6 +84,25 @@ class WebsiteDiscoveryService:
         return product_like + other_links
 
     @staticmethod
+    def _is_discoverable_content(content_type: str, page_text: str) -> bool:
+        """Accept supported payloads and HTML documents mislabelled as plain text.
+
+        Some static file/CDN hosts serve .html documents as text/plain. Only
+        promote that media type when the payload has an unambiguous HTML/JSON-LD
+        signature; arbitrary plain text remains excluded from discovery.
+        """
+        media_type = (content_type or "").split(";", 1)[0].strip().lower()
+        if media_type in {"text/html", "application/xhtml+xml", "application/json"}:
+            return True
+        if media_type != "text/plain":
+            return False
+        sample = (page_text or "")[:65536]
+        return bool(re.search(
+            r"""(?is)(?:^\s*<!doctype\s+html\b|^\s*<html\b|<script\b[^>]*\btype\s*=\s*["']application/ld\+json["'])""",
+            sample,
+        ))
+
+    @staticmethod
     def _has_explicit_evidence(product: DiscoveredProduct, page_text: str, allowed_urls: Set[str]) -> bool:
         """Reject title-only, invented, or out-of-page product candidates."""
         if not product.name or not product.name.strip() or not product.url:
@@ -199,9 +218,9 @@ class WebsiteDiscoveryService:
                         diagnostics.append(f"Skipped {safe_url}: HTTP {response.status_code}")
                         continue
                     content_type = response.headers.get("content-type", "").lower()
-                    if "text/html" not in content_type and "application/json" not in content_type:
-                        continue
                     page_text = response.text
+                    if not cls._is_discoverable_content(content_type, page_text):
+                        continue
                     products, links, page_type = await cls._analyze_page(page_url=safe_url, html_text=page_text, base_domain=base_domain)
                     if not products and not links:
                         rendered = await render_page(safe_url)
