@@ -18,6 +18,13 @@ services:
         fromDatabase:
           name: nexora-db
           property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: nexora-redis
+          type: keyvalue
+          property: connectionString
+      - key: JWT_SECRET_KEY
+        generateValue: true
       - key: ENVIRONMENT
         value: production
       - key: ALLOWED_HOSTS
@@ -25,4 +32,18 @@ services:
       - key: AUTO_RENDER_ENABLED
         value: "true"
       - key: CORS_ORIGINS
-        value: https://nexora-frontend.onrender.com
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM_EMAIL
+        sync: false
+      - key: SMTP_FROM_NAME
+        value: Nexora
