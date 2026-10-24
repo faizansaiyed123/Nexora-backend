@@ -362,7 +362,7 @@ def main():
         page.get_by_label("Rule name").fill("Sony retail price drop")
         choose(page,"Alert type","PERCENTAGE_DROP")
         choose(page,"Offering scope",OFFERING)
-        page.get_by_label("Threshold").fill("10")
+        page.get_by_label("Threshold",exact=True).fill("10")
         page.get_by_label("Cooldown (minutes)").fill("60")
         shot(page,"28-alert-rule-form.png")
         rule=submit(page,"Create rule","/v1/alerts/rules").json()
