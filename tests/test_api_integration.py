@@ -194,6 +194,23 @@ async def test_full_tenant_api_and_database_workflow() -> None:
         competitor = competitor_response.json()
         competitor_id = competitor["id"]
 
+        # Source URLs are untrusted input even when attached to a valid competitor.
+        blocked_source = await client.post(
+            "/v1/sources",
+            headers=headers,
+            json={
+                "competitor_id": competitor_id,
+                "name": f"Blocked internal source {suffix}",
+                "base_url": "http://127.0.0.1:8000/v1/health",
+                "source_type": "OFFICIAL_STORE",
+                "collection_method": "HTTP_FAST",
+            },
+        )
+        assert blocked_source.status_code == 422, blocked_source.text
+        current_sources = await client.get("/v1/sources", headers=headers)
+        assert current_sources.status_code == 200, current_sources.text
+        assert all("Blocked internal source" not in row["name"] for row in current_sources.json())
+
         duplicate = await client.post(
             "/v1/competitors",
             headers=headers,
@@ -256,6 +273,19 @@ async def test_full_tenant_api_and_database_workflow() -> None:
         )
         assert source_read_back.status_code == 200, source_read_back.text
         assert source_read_back.json()["configuration"]["max_retries"] == 2
+
+        unsupported_proxy = await client.patch(
+            f"/v1/sources/{source_id}/configuration",
+            headers=headers,
+            json={"requires_proxy": True},
+        )
+        assert unsupported_proxy.status_code == 422, unsupported_proxy.text
+        proxy_read_back = await client.get(
+            f"/v1/sources/{source_id}", headers=headers
+        )
+        assert proxy_read_back.status_code == 200, proxy_read_back.text
+        assert proxy_read_back.json()["configuration"]["requires_proxy"] is False
+
         source_filter = await client.get(
             "/v1/sources",
             headers=headers,
@@ -288,6 +318,24 @@ async def test_full_tenant_api_and_database_workflow() -> None:
         )
         assert offering_response.status_code == 201, offering_response.text
         offering_id = offering_response.json()["id"]
+
+        blocked_offering = await client.post(
+            "/v1/offerings",
+            headers=headers,
+            json={
+                "name": f"Blocked internal offering {suffix}",
+                "sku": f"NXR-BLOCKED-{suffix}",
+                "url": "http://127.0.0.1:8000/v1/health",
+            },
+        )
+        assert blocked_offering.status_code == 422, blocked_offering.text
+        blocked_offering_lookup = await client.get(
+            "/v1/offerings",
+            headers=headers,
+            params={"q": f"Blocked internal offering {suffix}"},
+        )
+        assert blocked_offering_lookup.status_code == 200, blocked_offering_lookup.text
+        assert blocked_offering_lookup.json()["total_count"] == 0
 
         listing = await client.get(
             "/v1/offerings",
@@ -517,6 +565,20 @@ async def test_full_tenant_api_and_database_workflow() -> None:
         )
         assert match_response.status_code == 201, match_response.text
         match_id = match_response.json()["id"]
+
+        blocked_match = await client.post(
+            "/v1/offering-matches",
+            headers=headers,
+            json={
+                "offering_id": offering_id,
+                "source_id": source_id,
+                "target_url": "http://127.0.0.1:8000/v1/health",
+                "match_status": "APPROVED",
+                "confidence_score": 0.98,
+            },
+        )
+        assert blocked_match.status_code == 422, blocked_match.text
+
         matches = await client.get("/v1/offering-matches", headers=headers)
         assert matches.status_code == 200, matches.text
         assert any(item["id"] == match_id for item in matches.json())
@@ -527,6 +589,32 @@ async def test_full_tenant_api_and_database_workflow() -> None:
         )
         assert match_update.status_code == 200, match_update.text
         assert match_update.json()["match_status"] == "SUGGESTED"
+
+        # An inactive source must not start a collection job or fetch its target.
+        inactive_source = await client.patch(
+            f"/v1/sources/{source_id}",
+            headers=headers,
+            json={"is_active": False},
+        )
+        assert inactive_source.status_code == 200, inactive_source.text
+        blocked_collection = await client.post(
+            "/v1/collections/run",
+            headers=headers,
+            params={"offering_match_id": match_id},
+        )
+        assert blocked_collection.status_code == 503, blocked_collection.text
+        inactive_read_back = await client.get(
+            f"/v1/sources/{source_id}", headers=headers
+        )
+        assert inactive_read_back.status_code == 200, inactive_read_back.text
+        assert inactive_read_back.json()["is_active"] is False
+        active_source = await client.patch(
+            f"/v1/sources/{source_id}",
+            headers=headers,
+            json={"is_active": True},
+        )
+        assert active_source.status_code == 200, active_source.text
+
         match_detail = await client.get(
             f"/v1/offering-matches/{match_id}", headers=headers
         )
@@ -636,6 +724,60 @@ async def test_full_tenant_api_and_database_workflow() -> None:
         )
         other_auth = await _login(client, other_email)
         other_headers = {"Authorization": f"Bearer {other_auth['access_token']}"}
+
+        # Attempts to create linked records with another tenant's IDs must fail.
+        foreign_source_create = await client.post(
+            "/v1/sources",
+            headers=other_headers,
+            json={
+                "competitor_id": competitor_id,
+                "name": f"Foreign source attempt {suffix}",
+                "base_url": "https://www.datadoghq.com/pricing/",
+                "source_type": "OFFICIAL_STORE",
+                "collection_method": "HTTP_FAST",
+            },
+        )
+        assert foreign_source_create.status_code == 403, foreign_source_create.text
+        foreign_match_create = await client.post(
+            "/v1/offering-matches",
+            headers=other_headers,
+            json={
+                "offering_id": offering_id,
+                "source_id": source_id,
+                "target_url": "https://www.datadoghq.com/pricing/",
+                "match_status": "APPROVED",
+                "confidence_score": 0.98,
+            },
+        )
+        assert foreign_match_create.status_code == 400, foreign_match_create.text
+
+        foreign_source_update = await client.patch(
+            f"/v1/sources/{source_id}",
+            headers=other_headers,
+            json={"name": "Foreign tenant rename attempt"},
+        )
+        assert foreign_source_update.status_code == 404, foreign_source_update.text
+        foreign_match_update = await client.patch(
+            f"/v1/offering-matches/{match_id}",
+            headers=other_headers,
+            json={"match_status": "REJECTED"},
+        )
+        assert foreign_match_update.status_code == 404, foreign_match_update.text
+        foreign_offering_update = await client.patch(
+            f"/v1/offerings/{offering_id}",
+            headers=other_headers,
+            json={"current_price": "1.00"},
+        )
+        assert foreign_offering_update.status_code == 404, foreign_offering_update.text
+        foreign_offering_delete = await client.delete(
+            f"/v1/offerings/{offering_id}", headers=other_headers
+        )
+        assert foreign_offering_delete.status_code == 404, foreign_offering_delete.text
+        foreign_competitor_delete = await client.delete(
+            f"/v1/competitors/{competitor_id}", headers=other_headers
+        )
+        assert foreign_competitor_delete.status_code == 404, foreign_competitor_delete.text
+
         other_competitors = await client.get("/v1/competitors", headers=other_headers)
         assert other_competitors.status_code == 200, other_competitors.text
         assert all(row["id"] != competitor_id for row in other_competitors.json())
@@ -670,6 +812,21 @@ async def test_full_tenant_api_and_database_workflow() -> None:
         )
         assert still_active_in_owner.status_code == 200, still_active_in_owner.text
         assert still_active_in_owner.json()["is_archived"] is False
+        owner_source_read_back = await client.get(
+            f"/v1/sources/{source_id}", headers=headers
+        )
+        assert owner_source_read_back.status_code == 200, owner_source_read_back.text
+        assert owner_source_read_back.json()["name"] == "Datadog Official Pricing"
+        owner_match_read_back = await client.get(
+            f"/v1/offering-matches/{match_id}", headers=headers
+        )
+        assert owner_match_read_back.status_code == 200, owner_match_read_back.text
+        assert owner_match_read_back.json()["match_status"] == "SUGGESTED"
+        owner_offering_read_back = await client.get(
+            f"/v1/offerings/{offering_id}", headers=headers
+        )
+        assert owner_offering_read_back.status_code == 200, owner_offering_read_back.text
+        assert float(owner_offering_read_back.json()["current_price"]) == 2299.0
 
         # The API enforces the same private-target/SSRF boundary for discovery.
         blocked_target = await client.post(
