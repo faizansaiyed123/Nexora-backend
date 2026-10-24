@@ -256,6 +256,13 @@ async def test_full_tenant_api_and_database_workflow() -> None:
         )
         assert source_read_back.status_code == 200, source_read_back.text
         assert source_read_back.json()["configuration"]["max_retries"] == 2
+        source_filter = await client.get(
+            "/v1/sources",
+            headers=headers,
+            params={"competitor_id": competitor_id},
+        )
+        assert source_filter.status_code == 200, source_filter.text
+        assert [row["id"] for row in source_filter.json()] == [source_id]
 
         # Manual catalog, dynamic attributes, detail/history, filtering and archive.
         offering_response = await client.post(
@@ -336,7 +343,7 @@ async def test_full_tenant_api_and_database_workflow() -> None:
         assert filtered_payload["total_count"] == 1, filtered_payload
         assert len(filtered_payload["items"]) == 1
         assert filtered_payload["items"][0]["id"] == offering_id
-        assert filtered_payload["items"][0]["has_more"] if "has_more" in filtered_payload["items"][0] else True
+        assert filtered_payload["has_more"] is False, filtered_payload
 
         monitor = await client.post(
             f"/v1/offerings/{offering_id}/toggle-monitoring",
