@@ -244,6 +244,26 @@ async def test_full_tenant_api_and_database_workflow() -> None:
         assert source_response.status_code == 201, source_response.text
         source_id = source_response.json()["id"]
 
+        # A source without an explicit configuration still needs a working
+        # browser-rendering configuration when its visible collection method changes.
+        browser_method_update = await client.patch(
+            f"/v1/sources/{source_id}",
+            headers=headers,
+            json={"collection_method": "PLAYWRIGHT_BROWSER"},
+        )
+        assert browser_method_update.status_code == 200, browser_method_update.text
+        assert browser_method_update.json()["collection_method"] == "PLAYWRIGHT_BROWSER"
+        assert browser_method_update.json()["configuration"]["requires_javascript"] is True
+
+        http_method_update = await client.patch(
+            f"/v1/sources/{source_id}",
+            headers=headers,
+            json={"collection_method": "HTTP_FAST"},
+        )
+        assert http_method_update.status_code == 200, http_method_update.text
+        assert http_method_update.json()["collection_method"] == "HTTP_FAST"
+        assert http_method_update.json()["configuration"]["requires_javascript"] is False
+
         source_update = await client.patch(
             f"/v1/sources/{source_id}",
             headers=headers,

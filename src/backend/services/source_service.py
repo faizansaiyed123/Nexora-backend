@@ -76,10 +76,18 @@ class SourceService:
                 "Proxy collection is not implemented in the current runtime.",
                 code="UNSUPPORTED_PROXY_COLLECTION",
             )
-        if data.configuration:
+        configuration_data = (
+            data.configuration.model_dump() if data.configuration else None
+        )
+        if data.collection_method == CollectionMethodEnum.PLAYWRIGHT_BROWSER:
+            if configuration_data is None:
+                configuration_data = {}
+            configuration_data["requires_javascript"] = True
+
+        if configuration_data is not None:
             configuration = SourceConfigurationModel(
                 source_id=source.id,
-                **data.configuration.model_dump(),
+                **configuration_data,
             )
             db.add(configuration)
 
@@ -188,6 +196,22 @@ class SourceService:
 
         if "base_url" in update_data:
             update_data["base_url"] = UrlSecurityService.validate_url(update_data["base_url"])
+
+        # The browser collector is selected by the source's JavaScript setting,
+        # so keep that setting aligned with changes made to the visible method field.
+        if "collection_method" in update_data:
+            requires_javascript = (
+                update_data["collection_method"] == CollectionMethodEnum.PLAYWRIGHT_BROWSER
+            )
+            if source.configuration is None and requires_javascript:
+                db.add(
+                    SourceConfigurationModel(
+                        source_id=source.id,
+                        requires_javascript=True,
+                    )
+                )
+            elif source.configuration is not None:
+                source.configuration.requires_javascript = requires_javascript
 
         for field, value in update_data.items():
             setattr(source, field, value)
