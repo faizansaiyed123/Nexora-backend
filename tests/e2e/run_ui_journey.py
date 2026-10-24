@@ -664,18 +664,25 @@ def main() -> None:
         viewer = run_async(create_role_user(client_id, RoleEnum.VIEWER, role_suffix))
         sign_out(page)
         sign_in(page, analyst, ROLE_PASSWORD)
+        assert get_api(page, "/v1/auth/me")["role"] == "ANALYST"
         page.get_by_role("link", name="Competitors", exact=True).click()
+        page.get_by_role("heading", name="Competitors", exact=True).wait_for()
         assert page.get_by_role("button", name="Add competitor", exact=True).count() == 0
         denied = page.request.post(API_URL + "/v1/competitors",
             headers={"Authorization": f"Bearer {token(page)}", "Content-Type": "application/json"},
             data=dict(name="Unauthorized Analyst Write", domain="forbidden-analyst.example"))
         assert denied.status == 403, denied.text()
         page.get_by_role("link", name="Discovery", exact=True).click()
-        assert page.get_by_role("button", name="Run discovery", exact=True).is_visible()
+        page.get_by_role("heading", name="Website discovery", exact=True).wait_for()
+        discovery_action = page.get_by_role("button", name="Run discovery", exact=True)
+        discovery_action.wait_for()
+        assert discovery_action.is_visible()
         shot(page, "44-analyst-workspace.png")
         sign_out(page)
         sign_in(page, viewer, ROLE_PASSWORD)
+        assert get_api(page, "/v1/auth/me")["role"] == "VIEWER"
         page.get_by_role("link", name="Offerings", exact=True).click()
+        page.get_by_role("heading", name="Offerings", exact=True).wait_for()
         assert page.get_by_role("button", name="Add offering", exact=True).count() == 0
         assert page.get_by_role("button", name="Bulk import", exact=True).count() == 0
         assert page.get_by_role("button", name="Dynamic fields", exact=True).count() == 0
