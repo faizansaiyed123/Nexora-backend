@@ -928,6 +928,7 @@ def main():
         logout(page)
         login(page,viewer_email,ROLE_PASSWORD)
         page.get_by_role("link",name="Offerings",exact=True).click()
+        page.get_by_role("heading",name="Offerings",exact=True).wait_for(timeout=15000)
         assert page.get_by_role("button",name="Add offering",exact=True).count()==0
         assert page.get_by_role("button",name="Bulk import",exact=True).count()==0
         assert page.get_by_role("button",name="Dynamic fields",exact=True).count()==0
