@@ -916,6 +916,7 @@ def main():
         logout(page)
         login(page,analyst_email,ROLE_PASSWORD)
         page.get_by_role("link",name="Competitors",exact=True).click()
+        page.locator(".content h2").filter(has_text="Competitors").wait_for(timeout=15000)
         assert page.get_by_role("button",name="Add competitor",exact=True).count()==0
         analyst_token=token(page)
         analyst_write=page.request.post(API+"/v1/competitors",headers={"Authorization":"Bearer "+analyst_token},data=json.dumps({"name":"Not Allowed","domain":"blocked-"+suffix+".example"}))
@@ -928,7 +929,7 @@ def main():
         logout(page)
         login(page,viewer_email,ROLE_PASSWORD)
         page.get_by_role("link",name="Offerings",exact=True).click()
-        page.get_by_role("heading",name="Offerings",exact=True).wait_for(timeout=15000)
+        page.locator(".content h2").filter(has_text="Offerings").wait_for(timeout=15000)
         assert page.get_by_role("button",name="Add offering",exact=True).count()==0
         assert page.get_by_role("button",name="Bulk import",exact=True).count()==0
         assert page.get_by_role("button",name="Dynamic fields",exact=True).count()==0
@@ -944,7 +945,8 @@ def main():
         logout(page)
         login(page,super_admin_email,ROLE_PASSWORD)
         page.get_by_role("link",name="Competitors",exact=True).click()
-        page.get_by_role("button",name="Add competitor",exact=True).wait_for()
+        page.locator(".content h2").filter(has_text="Competitors").wait_for(timeout=15000)
+        page.get_by_role("button",name="Add competitor",exact=True).wait_for(state="visible",timeout=10000)
         page.get_by_role("button",name="Add competitor",exact=True).click()
         page.get_by_label("Name").fill("Super Admin Review Competitor")
         page.get_by_label("Domain").fill("super-admin-"+suffix+".example")
