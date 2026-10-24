@@ -577,7 +577,10 @@ def main():
         shot(page,"38-password-changed.png")
         logout(page)
         page.get_by_role("link",name="Forgot password?",exact=True).click()
-        page.get_by_label("Work email").fill(EMAIL)
+        page.get_by_role("heading",name="Reset access without losing your workspace.",exact=True).wait_for(timeout=10000)
+        reset_email=page.get_by_label("Work email",exact=True)
+        reset_email.fill(EMAIL)
+        assert reset_email.input_value()==EMAIL, "Password recovery email was not entered into the recovery form."
         reset_start=len(emails())
         submit(page,"Send reset link","/v1/auth/forgot-password",status=200)
         page.get_by_role("heading",name="Check your inbox",exact=True).wait_for()
