@@ -498,7 +498,8 @@ def main():
         shot(page,"35-discovery-update-history.png")
 
         # Workspace profile, password change, recovery email and one-time reset link.
-        page.get_by_role("link",name="Settings",exact=True).click()
+        page.locator("button.profile-trigger").click()
+        page.get_by_text("Account settings",exact=True).click()
         page.locator(".content h2").filter(has_text="Settings").wait_for()
         page.get_by_label("Company name").wait_for()
         shot(page,"36-workspace-settings.png")
