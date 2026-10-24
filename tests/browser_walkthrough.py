@@ -882,6 +882,60 @@ def main():
         assert any(row["id"]==super_admin_create["id"] for row in get_api(page,"/v1/competitors"))
         shot(page,"45-super-admin-workspace.png")
 
+        # Exercise source deletion on a separate temporary source, so the source
+        # used for collection evidence remains available for direct DB checks.
+        page.get_by_role("link",name="Sources",exact=True).click()
+        page.get_by_role("button",name="Add source",exact=True).click()
+        choose(page,"Competitor","Super Admin Review Competitor")
+        temp_source_name="Disposable source for deletion"
+        page.get_by_label("Source name").fill(temp_source_name)
+        page.get_by_label("Base URL").fill(HIGH_URL)
+        choose(page,"Source type","OFFICIAL_STORE")
+        choose(page,"Collection method","HTTP_FAST")
+        temporary_source=submit(page,"Create source","/v1/sources").json()
+        temp_source_id=temporary_source["id"]
+        assert any(row["id"]==temp_source_id for row in get_api(page,"/v1/sources"))
+        page.get_by_text(temp_source_name,exact=True).wait_for()
+        shot(page,"45b-super-admin-source-created.png")
+        temp_source_row=page.locator("tbody tr").filter(has_text=temp_source_name).first
+        with expect(page,f"/v1/sources/{temp_source_id}","DELETE") as delete_source_event:
+            temp_source_row.locator("button.danger-icon").click()
+        assert delete_source_event.value.status==204,delete_source_event.value.text()
+        assert all(row["id"]!=temp_source_id for row in get_api(page,"/v1/sources"))
+        shot(page,"45c-super-admin-source-deleted.png")
+
+        # Delete the temporary competitor after its source has been removed.
+        page.get_by_role("link",name="Competitors",exact=True).click()
+        temp_competitor_row=page.locator("tbody tr").filter(has_text="Super Admin Review Competitor").first
+        with expect(page,f"/v1/competitors/{super_admin_create['id']}","DELETE") as delete_competitor_event:
+            temp_competitor_row.locator("button.danger-icon").click()
+        assert delete_competitor_event.value.status==204,delete_competitor_event.value.text()
+        competitor_lookup=page.request.get(
+            API+f"/v1/competitors/{super_admin_create['id']}",
+            headers={"Authorization":"Bearer "+token(page)})
+        assert competitor_lookup.status==404,competitor_lookup.text()
+        shot(page,"45d-super-admin-competitor-deleted.png")
+
+        # Alert rules also support deletion; isolate this temporary rule from the
+        # live price-drop and circuit-breaker rules used earlier in the journey.
+        page.get_by_role("link",name="Alerts",exact=True).click()
+        page.get_by_role("button",name="New rule",exact=True).click()
+        temp_rule_name="Disposable alert rule for deletion"
+        page.get_by_label("Rule name").fill(temp_rule_name)
+        choose(page,"Alert type","PRICE_CHANGE")
+        choose(page,"Offering scope","All offerings")
+        page.get_by_label("Threshold",exact=True).fill("1")
+        page.get_by_label("Cooldown (minutes)").fill("60")
+        temporary_rule=submit(page,"Create rule","/v1/alerts/rules").json()
+        temp_rule_id=temporary_rule["id"]
+        assert any(row["id"]==temp_rule_id for row in get_api(page,"/v1/alerts/rules"))
+        temp_rule_row=page.locator("div.list-row").filter(has_text=temp_rule_name).last
+        with expect(page,f"/v1/alerts/rules/{temp_rule_id}","DELETE") as delete_rule_event:
+            temp_rule_row.get_by_title("Delete rule",exact=True).click()
+        assert delete_rule_event.value.status==204,delete_rule_event.value.text()
+        assert all(row["id"]!=temp_rule_id for row in get_api(page,"/v1/alerts/rules"))
+        shot(page,"45e-super-admin-alert-rule-deleted.png")
+
         # Create a second tenant through the public registration and real mail-verification
         # flow; prove its records and permissions are separate from the original tenant.
         isolated_suffix=uuid.uuid4().hex[:8]
@@ -1000,7 +1054,7 @@ def main():
             (47,"isolated-tenant-competitors.png"),(48,"isolated-tenant-catalog.png"),(49,"isolated-tenant-alerts.png"),
             (50,"mobile-dashboard.png"),(51,"mobile-homepage.png"),
         ]]
-        expected_names += ["13b-source-js-rendering-enabled.png","22b-bulk-import-row-errors.png","23b-single-offering-archived.png","23c-catalog-pagination.png","23d-catalog-type-filter.png","29b-circuit-breaker-rule-form.png","29c-source-circuit-open.png","29d-circuit-breaker-alert.png"]
+        expected_names += ["13b-source-js-rendering-enabled.png","22b-bulk-import-row-errors.png","23b-single-offering-archived.png","23c-catalog-pagination.png","23d-catalog-type-filter.png","29b-circuit-breaker-rule-form.png","29c-source-circuit-open.png","29d-circuit-breaker-alert.png","45b-super-admin-source-created.png","45c-super-admin-source-deleted.png","45d-super-admin-competitor-deleted.png","45e-super-admin-alert-rule-deleted.png"]
         missing=[name for name in expected_names if not (SHOTS/name).is_file()]
         assert not missing,"Missing visitor journey screens: "+str(missing)
         print(f"VISITOR JOURNEY COMPLETE: {len(expected_names)} screenshots captured; UI, API, PostgreSQL and mail flows completed.",flush=True)
