@@ -693,8 +693,8 @@ def main() -> None:
         shot(page, "45-viewer-read-only.png")
 
         # Responsive public page and final direct PostgreSQL evidence.
-        mobile = context.new_page()
-        mobile.set_viewport_size({"width":390,"height":844})
+        mobile_context = browser.new_context(viewport={"width":390,"height":844})
+        mobile = mobile_context.new_page()
         mobile.goto(FRONTEND_URL + "/welcome", wait_until="networkidle")
         dimensions = mobile.evaluate("() => ({viewport:document.documentElement.clientWidth,content:document.documentElement.scrollWidth})")
         overflow_diagnostics = mobile.evaluate("""() => Array.from(document.querySelectorAll("body *")).map(element => {
