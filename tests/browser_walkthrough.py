@@ -716,7 +716,13 @@ def main():
         shot(page,"26-first-price-observation.png")
         page.get_by_role("link",name="Dashboard",exact=True).click()
         page.get_by_role("heading",name="Know what changed before the market tells you.",exact=True).wait_for()
-        page.get_by_text(OFFERING,exact=True).wait_for()
+        # The catalogue paging scenario intentionally added 51 newer records,
+        # so the original offering is no longer guaranteed to appear in the
+        # dashboard's eight-item preview. Verify the fresh collection activity
+        # on the dashboard; the exact price/snapshot is asserted above and again
+        # from PostgreSQL at the end of the journey.
+        page.get_by_text("ON DEMAND REFRESH",exact=False).wait_for()
+        page.get_by_text("Recent collection activity",exact=True).wait_for()
         shot(page,"27-dashboard-with-market-data.png")
 
         # Price-drop rule persists an alert, routes an email, and can be acknowledged.
