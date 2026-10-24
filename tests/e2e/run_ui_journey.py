@@ -134,8 +134,8 @@ def mail_link(body: str, route: str) -> str:
 
 
 def sign_in(page: Page, email: str, password: str) -> None:
-    page.get_by_label("Work email").fill(email)
-    page.get_by_label("Password", exact=True).fill(password)
+    page.locator('input[autocomplete="email"]').fill(email)
+    page.locator('input[autocomplete="current-password"]').fill(password)
     with page.expect_response(lambda r: r.url.endswith("/v1/auth/login") and r.request.method == "POST") as event:
         page.get_by_role("button", name=re.compile("Sign in")).click()
     assert event.value.status == 200, event.value.text()
