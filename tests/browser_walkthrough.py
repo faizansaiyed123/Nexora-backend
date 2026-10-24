@@ -183,7 +183,7 @@ def main():
 
         # Competitor configuration, duplicate-domain guard and update.
         page.get_by_role("link",name="Competitors",exact=True).click()
-        page.get_by_role("heading",name="Competitors",exact=True).wait_for()
+        page.locator(".content h2").filter(has_text="Competitors").wait_for()
         shot(page,"07-competitors.png")
         page.get_by_role("button",name="Add competitor",exact=True).click()
         page.get_by_label("Name").fill("Retail Product Reference (initial)")
@@ -208,7 +208,7 @@ def main():
 
         # Source and source configuration.
         page.get_by_role("link",name="Sources",exact=True).click()
-        page.get_by_role("heading",name="Sources",exact=True).wait_for()
+        page.locator(".content h2").filter(has_text="Sources").wait_for()
         page.get_by_role("button",name="Add source",exact=True).click()
         choose(page,"Competitor",COMPETITOR)
         page.get_by_label("Source name").fill(SOURCE)
@@ -240,7 +240,7 @@ def main():
 
         # Catalog CRUD, dynamic fields, bulk import/export and archive.
         page.get_by_role("link",name="Offerings",exact=True).click()
-        page.get_by_role("heading",name="Offerings",exact=True).wait_for()
+        page.locator(".content h2").filter(has_text="Offerings").wait_for()
         page.get_by_role("button",name="Add offering",exact=True).click()
         page.get_by_label("Name").fill(OFFERING)
         choose(page,"Offering type","PRODUCT")
@@ -328,7 +328,7 @@ def main():
 
         # A matched competitor URL creates a real price observation and snapshot.
         page.get_by_role("link",name="Matches",exact=True).click()
-        page.get_by_role("heading",name="Offering matches",exact=True).wait_for()
+        page.locator(".content h2").filter(has_text="Offering matches").wait_for()
         page.get_by_role("button",name="Add match",exact=True).click()
         choose(page,"Offering",OFFERING)
         choose(page,"Source",SOURCE+" Structured")
@@ -356,7 +356,7 @@ def main():
 
         # Price-drop rule persists an alert, routes an email, and can be acknowledged.
         page.get_by_role("link",name="Alerts",exact=True).click()
-        page.get_by_role("heading",name="Alerts",exact=True).wait_for()
+        page.locator(".content h2").filter(has_text="Alerts").wait_for()
         page.get_by_role("button",name="New rule",exact=True).click()
         page.get_by_label("Rule name").fill("Sony retail price drop")
         choose(page,"Alert type","PERCENTAGE_DROP")
@@ -403,7 +403,7 @@ def main():
 
         # Collection execution history and saved job details.
         page.get_by_role("link",name="Jobs",exact=True).click()
-        page.get_by_role("heading",name="Jobs",exact=True).wait_for()
+        page.locator(".content h2").filter(has_text="Jobs").wait_for()
         page.get_by_text("ON DEMAND REFRESH",exact=False).wait_for()
         shot(page,"31-collection-job-history.png")
         page.get_by_role("button",name="Details",exact=True).first.click()
@@ -413,7 +413,7 @@ def main():
 
         # Discovery validates public targets, persists structured catalog data and updates in place.
         page.get_by_role("link",name="Discovery",exact=True).click()
-        page.get_by_role("heading",name="Website discovery",exact=True).wait_for()
+        page.locator(".content h2").filter(has_text="Website discovery").wait_for()
         page.get_by_label("Website URL").fill("http://127.0.0.1:8000/v1/health")
         page.get_by_label("Max pages").fill("1")
         blocked=submit(page,"Run discovery","/v1/discovery/run",status=422)
@@ -436,7 +436,7 @@ def main():
 
         # Workspace profile, password change, recovery email and one-time reset link.
         page.get_by_role("link",name="Settings",exact=True).click()
-        page.get_by_role("heading",name="Settings",exact=True).wait_for()
+        page.locator(".content h2").filter(has_text="Settings").wait_for()
         page.get_by_label("Company name").wait_for()
         shot(page,"36-workspace-settings.png")
         page.get_by_label("Company name").fill("Northstar Analytics")
@@ -449,7 +449,7 @@ def main():
         assert profile["company_name"]=="Northstar Analytics"
         assert get_api(page,"/v1/auth/profile")["company_name"]=="Northstar Analytics"
         shot(page,"37-workspace-profile-saved.png")
-        page.get_by_label("Current password").fill(PASSWORD)
+        page.locator('input[autocomplete="current-password"]').fill(PASSWORD)
         page.locator('input[autocomplete="new-password"]').fill(CHANGED_PASSWORD)
         submit(page,"Update password","/v1/auth/change-password",status=200)
         old_login=page.request.post(API+"/v1/auth/login",data=json.dumps({"email":EMAIL,"password":PASSWORD}),headers={"Content-Type":"application/json"})
@@ -466,7 +466,7 @@ def main():
         shot(page,"39-password-reset-requested.png")
         reset_url=email_link(wait_email("Reset your Nexora password",EMAIL,reset_start),"reset-password")
         page.goto(reset_url,wait_until="networkidle")
-        page.get_by_label("New password").wait_for()
+        page.locator('input[autocomplete="new-password"]').wait_for()
         shot(page,"40-password-reset-form.png")
         page.locator('input[autocomplete="new-password"]').fill(RESET_PASSWORD)
         submit(page,"Update password","/v1/auth/reset-password",status=200)
