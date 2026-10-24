@@ -761,7 +761,6 @@ def main():
         login(page,super_admin_email,ROLE_PASSWORD)
         page.get_by_role("link",name="Competitors",exact=True).click()
         page.get_by_role("button",name="Add competitor",exact=True).wait_for()
-        super_admin_create=submit(page,"Save competitor","/v1/competitors").json() if False else None
         page.get_by_role("button",name="Add competitor",exact=True).click()
         page.get_by_label("Name").fill("Super Admin Review Competitor")
         page.get_by_label("Domain").fill("super-admin-"+suffix+".example")
