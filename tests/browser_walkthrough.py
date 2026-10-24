@@ -467,7 +467,7 @@ def main():
         # Collection execution history and saved job details.
         page.get_by_role("link",name="Jobs",exact=True).click()
         page.locator(".content h2").filter(has_text="Jobs").wait_for()
-        page.get_by_text("ON DEMAND REFRESH",exact=False).wait_for()
+        page.locator("tbody tr").filter(has_text="ON DEMAND REFRESH").first.wait_for()
         shot(page,"31-collection-job-history.png")
         page.get_by_role("button",name="Details",exact=True).first.click()
         page.get_by_text("Job ID",exact=True).wait_for()
@@ -566,8 +566,8 @@ def main():
         assert viewer_write.status==403,viewer_write.text()
         shot(page,"44-viewer-read-only-workspace.png")
 
-        mobile=context.new_page()
-        mobile.set_viewport_size({"width":390,"height":844})
+        mobile_context=browser.new_context(viewport={"width":390,"height":844})
+        mobile=mobile_context.new_page()
         mobile.goto(FRONTEND+"/welcome",wait_until="networkidle")
         dimensions=mobile.evaluate("() => ({viewport:document.documentElement.clientWidth,content:document.documentElement.scrollWidth})")
         overflow_diagnostics=mobile.evaluate("""() => Array.from(document.querySelectorAll("body *")).map(element => {
@@ -585,6 +585,7 @@ def main():
         print("MOBILE_OVERFLOW_DIAGNOSTICS "+json.dumps({"dimensions":dimensions,"elements":overflow_diagnostics}),flush=True)
         assert dimensions["content"]<=dimensions["viewport"],{"dimensions":dimensions,"overflow":overflow_diagnostics}
         shot(mobile,"45-mobile-homepage.png")
+        mobile_context.close()
         assert not BROWSER_ERRORS,"Frontend JavaScript errors: "+" | ".join(BROWSER_ERRORS)
         expected_names=[f"{i:02d}-"+name for i,name in [
             (0,"public-homepage.png"),(1,"registration-form.png"),(2,"verification-email-sent.png"),(3,"email-verification-page.png"),
