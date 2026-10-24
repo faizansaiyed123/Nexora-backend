@@ -414,6 +414,29 @@ async def run_collection(
                 or "Collection failed."
             )
 
+            # A circuit-breaker alert is an operational signal emitted when this
+            # failure actually opens the circuit. Evaluating it only on successful
+            # collections means the threshold-crossing failure can never notify
+            # the workspace.
+            if circuit_tripped:
+                await AlertService.evaluate_and_trigger(
+                    session,
+                    client_id=auth_ctx.client_id,
+                    offering_id=offering.id if offering else None,
+                    offering_match_id=offering_match_id_val,
+                    offering_name=offering.name if offering else "Offering",
+                    competitor_name=competitor.name if competitor else "Competitor",
+                    source_name=source.name if source else "Source",
+                    client_price=offering.base_price if offering else None,
+                    previous_price=previous_price,
+                    current_price=collection_result.price,
+                    previous_availability=previous_availability,
+                    current_availability=availability,
+                    percentage_difference=(
+                        snapshot.percentage_difference if snapshot is not None else None
+                    ),
+                    circuit_tripped=True,
+                )
 
         await session.commit()
         await session.refresh(job)
