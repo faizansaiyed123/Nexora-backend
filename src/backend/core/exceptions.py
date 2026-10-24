@@ -103,3 +103,18 @@ class RateLimitException(AppException):
             status_code=429,
         )
         self.retry_after_seconds = max(1, int(retry_after_seconds))
+
+
+class ServiceUnavailableException(AppException):
+    """Raised when a required service is temporarily unavailable."""
+
+    def __init__(
+        self,
+        message: str = "The service is temporarily unavailable. Please try again shortly.",
+        code: str = "SERVICE_UNAVAILABLE",
+    ) -> None:
+        super().__init__(
+            message=message,
+            code=code,
+            status_code=503,
+        )

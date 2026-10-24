@@ -111,6 +111,32 @@ async def test_full_tenant_api_and_database_workflow() -> None:
         assert me.json()["role"] == "ORG_ADMIN"
         client_id = uuid.UUID(me.json()["client_id"])
 
+        # An invalid one-time token must never verify an unrelated pending account.
+        pending_email = f"pending-{suffix}-{uuid.uuid4().hex[:8]}@example.com"
+        async with AsyncSessionLocal() as session:
+            session.add(
+                UserModel(
+                    client_id=client_id,
+                    email=pending_email,
+                    full_name="Pending Verification",
+                    hashed_password=get_password_hash(INITIAL_PASSWORD),
+                    role=RoleEnum.VIEWER,
+                    is_active=True,
+                    email_verified=False,
+                )
+            )
+            await session.commit()
+        invalid_verification = await client.get(
+            "/v1/auth/verify-email",
+            params={"token": f"invalid-{uuid.uuid4().hex}"},
+        )
+        assert invalid_verification.status_code == 422, invalid_verification.text
+        async with AsyncSessionLocal() as session:
+            pending_user = await session.scalar(
+                select(UserModel).where(UserModel.email == pending_email)
+            )
+            assert pending_user is not None and pending_user.email_verified is False
+
         profile = await client.get("/v1/auth/profile", headers=headers)
         assert profile.status_code == 200, profile.text
         profile_update = await client.patch(

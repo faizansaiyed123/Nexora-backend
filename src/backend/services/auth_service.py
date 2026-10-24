@@ -19,6 +19,7 @@ from backend.core.exceptions import (
     AuthenticationException,
     ConflictException,
     NotFoundException,
+    ServiceUnavailableException,
     ValidationException,
 )
 from backend.core.rate_limit import TokenSessionStore
@@ -220,45 +221,44 @@ class AuthService:
             payload = await TokenSessionStore.get_and_consume_email_verification_token(
                 token_hash
             )
-        except Exception:
-            payload = None
+        except Exception as exc:
+            logger.exception("Email verification token lookup failed.")
+            raise ServiceUnavailableException(
+                "Email verification is temporarily unavailable. Please try again shortly.",
+                code="EMAIL_VERIFICATION_UNAVAILABLE",
+            ) from exc
 
-        user = None
-        if payload:
-            user_id = payload.get("user_id")
-
-            try:
-                user_uuid = uuid.UUID(user_id)
-            except (ValueError, TypeError):
-                raise ValidationException(
-                    "Invalid email verification token.",
-                    code="INVALID_VERIFICATION_TOKEN",
-                )
-
-            result = await session.execute(
-                select(UserModel).where(UserModel.id == user_uuid)
+        if not payload:
+            raise ValidationException(
+                "Invalid or expired email verification token.",
+                code="INVALID_VERIFICATION_TOKEN",
             )
-            user = result.scalar_one_or_none()
-            if not user:
-                raise NotFoundException(
-                    "User not found.",
-                    code="USER_NOT_FOUND",
-                )
-        else:
-            result = await session.execute(
-                select(UserModel).where(
-                    UserModel.email_verified.is_(False),
-                    UserModel.is_active.is_(True),
-                )
-                .order_by(UserModel.created_at.desc())
-                .limit(1)
+
+        user_id = payload.get("user_id")
+        try:
+            user_uuid = uuid.UUID(user_id)
+        except (ValueError, TypeError, AttributeError):
+            raise ValidationException(
+                "Invalid email verification token.",
+                code="INVALID_VERIFICATION_TOKEN",
             )
-            user = result.scalar_one_or_none()
-            if not user:
-                raise ValidationException(
-                    "Invalid or expired email verification token.",
-                    code="INVALID_VERIFICATION_TOKEN",
-                )
+
+        result = await session.execute(
+            select(UserModel).where(UserModel.id == user_uuid)
+        )
+        user = result.scalar_one_or_none()
+        if not user:
+            raise NotFoundException(
+                "User not found.",
+                code="USER_NOT_FOUND",
+            )
+
+        token_email = payload.get("email")
+        if token_email and str(token_email).strip().lower() != user.email.lower():
+            raise ValidationException(
+                "Invalid email verification token.",
+                code="INVALID_VERIFICATION_TOKEN",
+            )
 
         if user.email_verified:
             return

@@ -121,7 +121,7 @@ class TokenSessionStore:
     async def get_and_consume_email_verification_token(cls, token_hash: str) -> Optional[dict]:
         redis = await get_redis_client()
         if not redis:
-            return None
+            raise RuntimeError("Redis is required for email verification tokens.")
         try:
             import json
             key = f"email_verify:{token_hash}"
@@ -130,11 +130,10 @@ class TokenSessionStore:
                 1,
                 key,
             )
-            if raw:
-                return json.loads(raw)
-        except Exception as e:
-            logger.error(f"Failed to consume email verification token: {e}")
-        return None
+            return json.loads(raw) if raw else None
+        except Exception as exc:
+            logger.error("Failed to consume email verification token: %s", type(exc).__name__)
+            raise
 
     @classmethod
     async def store_password_reset_token(cls, token_hash: str, user_id: str, email: str, ttl_seconds: int = 900) -> None:
