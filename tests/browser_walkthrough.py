@@ -464,6 +464,60 @@ def main():
         assert "Nexora detected a competitive intelligence event" in mail_body
         assert "SENT" in get_outbox_statuses_sync(client_id)
 
+        # Repeated real source failures open the circuit and generate a persistent
+        # operational alert. A final request is rejected before another job starts.
+        page.get_by_role("button",name="New rule",exact=True).click()
+        page.get_by_label("Rule name").fill("Source outage circuit breaker")
+        choose(page,"Alert type","CIRCUIT_BREAKER_TRIPPED")
+        page.get_by_label("Deliver through email channel").uncheck()
+        shot(page,"29b-circuit-breaker-rule-form.png")
+        circuit_rule=submit(page,"Create rule","/v1/alerts/rules").json()
+        circuit_rule_id=circuit_rule["id"]
+        assert circuit_rule["alert_type"]=="CIRCUIT_BREAKER_TRIPPED",circuit_rule
+
+        page.get_by_role("link",name="Matches",exact=True).click()
+        match_row=page.locator("tbody tr").filter(has_text=OFFERING).first
+        match_row.get_by_title("Edit",exact=True).click()
+        missing_url="https://cdn.jsdelivr.net/gh/faizansaiyed123/Nexora-backend@main/tests/fixtures/retail-price-missing.html"
+        page.get_by_label("Competitor target URL").fill(missing_url)
+        edited_match=submit(page,"Save changes",f"/v1/offering-matches/{match_id}","PATCH",200).json()
+        assert edited_match["target_url"]==missing_url,edited_match
+
+        with expect(page,"/v1/collections/run","POST") as first_failed_collection:
+            page.locator("tbody tr").filter(has_text=OFFERING).first.get_by_title("Run collection",exact=True).click()
+        first_failure=first_failed_collection.value
+        assert first_failure.status==502,first_failure.text()
+
+        for attempt in range(2,6):
+            failure=page.request.post(
+                API+f"/v1/collections/run?offering_match_id={match_id}",
+                headers={"Authorization":"Bearer "+token(page)},
+            )
+            assert failure.status==502,f"Failed collection attempt {attempt} returned {failure.status}: {failure.text()}"
+
+        source_state=get_api(page,f"/v1/sources/{source_id}")
+        assert source_state["circuit_state"]=="OPEN",source_state
+        assert source_state["failure_count"]>=5,source_state
+
+        circuit_block=page.request.post(
+            API+f"/v1/collections/run?offering_match_id={match_id}",
+            headers={"Authorization":"Bearer "+token(page)},
+        )
+        assert circuit_block.status==503,circuit_block.text()
+        assert "circuit breaker is open" in circuit_block.text().lower(),circuit_block.text()
+
+        page.get_by_role("link",name="Sources",exact=True).click()
+        page.locator(".content h2").filter(has_text="Sources").wait_for()
+        page.get_by_text("OPEN",exact=True).wait_for()
+        page.get_by_text("FAILING",exact=True).wait_for()
+        shot(page,"29c-source-circuit-open.png")
+
+        page.get_by_role("link",name="Alerts",exact=True).click()
+        page.get_by_text("Competitor source circuit breaker tripped",exact=True).wait_for(timeout=15000)
+        circuit_logs=get_api(page,"/v1/alerts/logs")
+        assert any(log["title"]=="Competitor source circuit breaker tripped" for log in circuit_logs),circuit_logs
+        shot(page,"29d-circuit-breaker-alert.png")
+
         # Collection execution history and saved job details.
         page.get_by_role("link",name="Jobs",exact=True).click()
         page.locator(".content h2").filter(has_text="Jobs").wait_for()
@@ -611,11 +665,11 @@ def main():
             (16,"offering-details.png"),(17,"monitoring-controls.png"),(18,"dynamic-fields.png"),(19,"dynamic-field-form.png"),
             (20,"dynamic-field-created.png"),(21,"bulk-import-form.png"),(22,"bulk-import-results.png"),(23,"catalog-import-export-archive.png"),
             (24,"offering-match-form.png"),(25,"offering-match-created.png"),(26,"first-price-observation.png"),(27,"dashboard-with-market-data.png"),
-            (28,"alert-rule-form.png"),(29,"alert-rule-created.png"),(30,"alert-generated-and-read.png"),(31,"collection-job-history.png"),
+            (28,"alert-rule-form.png"),(29,"alert-rule-created.png"),(29,"circuit-breaker-rule-form.png"),(29,"source-circuit-open.png"),(29,"circuit-breaker-alert.png"),(30,"alert-generated-and-read.png"),(31,"collection-job-history.png"),
             (32,"collection-job-details.png"),(33,"private-target-blocked.png"),(34,"discovery-product-created.png"),(35,"discovery-update-history.png"),
             (36,"workspace-settings.png"),(37,"workspace-profile-saved.png"),(38,"password-changed.png"),(39,"password-reset-requested.png"),
             (40,"password-reset-form.png"),(41,"password-reset-complete.png"),(42,"dashboard-after-reset.png"),(43,"analyst-workspace.png"),
-            (44,"viewer-read-only-workspace.png"),(45,"mobile-dashboard.png"),(46,"mobile-homepage.png")
+            (44,"viewer-read-only-workspace.png"),(45,"mobile-dashboard.png"),(46,"mobile-homepage.png"),
         ]]
         missing=[name for name in expected_names if not (SHOTS/name).is_file()]
         assert not missing,"Missing visitor journey screens: "+str(missing)
