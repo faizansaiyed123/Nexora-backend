@@ -545,7 +545,7 @@ def main():
         page.get_by_placeholder("Search name, SKU, category…").fill("Sony LinkBuds S")
         linkbuds_row=page.locator("tbody tr").filter(has_text="Sony LinkBuds S").first
         linkbuds_row.wait_for()
-        linkbuds_id=api_get(page,"/v1/offerings?q=Sony%20LinkBuds%20S&page=1&page_size=20")["items"][0]["id"]
+        linkbuds_id=get_api(page,"/v1/offerings?q=Sony%20LinkBuds%20S&page=1&page_size=20")["items"][0]["id"]
         with expect(page,f"/v1/offerings/{linkbuds_id}","DELETE") as single_archive:
             linkbuds_row.get_by_title("Archive",exact=True).click()
         assert single_archive.value.status==204,single_archive.value.text()
