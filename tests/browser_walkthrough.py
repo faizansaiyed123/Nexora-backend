@@ -15,7 +15,7 @@ from backend.models.notification import NotificationOutboxModel
 FRONTEND=os.getenv("NEXORA_FRONTEND_URL","http://127.0.0.1:4173").rstrip("/")
 API=os.getenv("NEXORA_API_URL","http://127.0.0.1:8000").rstrip("/")
 MAILBOX=Path(os.getenv("NEXORA_MAILBOX","/tmp/nexora-mailbox.jsonl"))
-SHOTS=Path("docs/walkthrough/screenshots")
+SHOTS=Path(os.getenv("NEXORA_SCREENSHOT_DIR","docs/walkthrough/screenshots"))
 EMAIL=f"market-analyst-{os.getenv('GITHUB_RUN_ID',uuid.uuid4().hex[:8])}@northstar.example.com"
 ORG="Northstar Market Intelligence"
 PERSON="Alex Morgan"
@@ -199,8 +199,121 @@ def dispatch_email_worker():
     assert lines,result.stdout+" "+result.stderr
     return json.loads(lines[-1])
 
+def verify_postgres_sync(client_id, competitor_id, source_id, offering_id, match_id,
+                         rule_id, circuit_rule_id, alert_id, isolated_client_id, super_admin_email):
+    """Verify the browser journey's important records with fresh PostgreSQL queries."""
+    code = r"""import asyncio, json, sys, uuid
+from sqlalchemy import func, select
+from sqlalchemy.orm import selectinload
+from backend.db.session import AsyncSessionLocal
+from backend.models.alert import AlertLogModel, AlertRuleModel
+from backend.models.client import ClientModel, UserModel
+from backend.models.competitor import CompetitorModel, OfferingMatchModel, SourceModel
+from backend.models.enums import CircuitStateEnum, RoleEnum
+from backend.models.notification import NotificationOutboxModel
+from backend.models.observation import JobModel, ObservationModel, SnapshotModel
+from backend.models.offering import OfferingModel
+
+async def main():
+    (tenant_id, competitor_id, source_id, offering_id, match_id, rule_id,
+     circuit_rule_id, alert_id, isolated_id) = [uuid.UUID(x) for x in sys.argv[1:10]]
+    super_admin_email = sys.argv[10]
+    async with AsyncSessionLocal() as session:
+        competitor = await session.scalar(select(CompetitorModel).where(
+            CompetitorModel.id == competitor_id,
+            CompetitorModel.client_id == tenant_id))
+        source = await session.scalar(select(SourceModel).options(
+            selectinload(SourceModel.configuration)).where(SourceModel.id == source_id))
+        offering = await session.scalar(select(OfferingModel).where(
+            OfferingModel.id == offering_id, OfferingModel.client_id == tenant_id))
+        match = await session.scalar(select(OfferingMatchModel).where(
+            OfferingMatchModel.id == match_id))
+        rule = await session.scalar(select(AlertRuleModel).where(
+            AlertRuleModel.id == rule_id, AlertRuleModel.client_id == tenant_id))
+        circuit_rule = await session.scalar(select(AlertRuleModel).where(
+            AlertRuleModel.id == circuit_rule_id, AlertRuleModel.client_id == tenant_id))
+        alert = await session.scalar(select(AlertLogModel).where(AlertLogModel.id == alert_id))
+        circuit_alert = await session.scalar(select(AlertLogModel).where(
+            AlertLogModel.alert_rule_id == circuit_rule_id,
+            AlertLogModel.title == "Competitor source circuit breaker tripped"))
+        snapshot = await session.scalar(select(SnapshotModel).where(
+            SnapshotModel.offering_match_id == match_id))
+        observations = await session.scalar(select(func.count()).select_from(
+            ObservationModel).where(ObservationModel.offering_match_id == match_id))
+        jobs = await session.scalar(select(func.count()).select_from(JobModel).where(
+            JobModel.source_id == source_id))
+        discovered = await session.scalar(select(OfferingModel).where(
+            OfferingModel.client_id == tenant_id, OfferingModel.sku == "WF1000XM5-BLK"))
+        notification_statuses = list((await session.execute(select(
+            NotificationOutboxModel.status).where(
+                NotificationOutboxModel.client_id == tenant_id,
+                NotificationOutboxModel.channel == "email"))).scalars().all())
+        isolated_client = await session.scalar(select(ClientModel).where(ClientModel.id == isolated_id))
+        isolated_competitors = await session.scalar(select(func.count()).select_from(
+            CompetitorModel).where(CompetitorModel.client_id == isolated_id))
+        isolated_offerings = await session.scalar(select(func.count()).select_from(
+            OfferingModel).where(OfferingModel.client_id == isolated_id))
+        isolated_alerts = await session.scalar(select(func.count()).select_from(
+            AlertRuleModel).where(AlertRuleModel.client_id == isolated_id))
+        super_admin = await session.scalar(select(UserModel).where(
+            UserModel.email == super_admin_email, UserModel.client_id == tenant_id))
+        assert competitor is not None and competitor.name == "Retail Product Reference", "Competitor not found in PostgreSQL."
+        assert source is not None and source.name == "Retail Product Listing", "Source not found in PostgreSQL."
+        assert source.circuit_state == CircuitStateEnum.OPEN and source.failure_count >= 5, "Source circuit state was not saved."
+        assert source.configuration is not None and source.configuration.max_retries == 1, "Source configuration was not saved."
+        assert offering is not None and str(offering.current_price).startswith("429.99"), "Updated catalog price was not saved."
+        assert match is not None and match.match_status.value == "APPROVED" and match.target_url.endswith("retail-price-missing.html"), "Final match state was not saved."
+        assert rule is not None and rule.is_active, "Price-drop rule was not saved as active."
+        assert circuit_rule is not None and circuit_rule.is_active, "Circuit-breaker rule was not saved."
+        assert alert is not None and alert.is_read, "Price-drop alert's read status was not saved."
+        assert circuit_alert is not None, "Circuit-breaker alert log was not saved."
+        assert snapshot is not None and str(snapshot.current_price).startswith("349.99"), "Latest snapshot was not saved."
+        assert int(observations or 0) >= 2, f"Expected persisted observations, got {observations}."
+        assert int(jobs or 0) >= 7, f"Expected successful and failed collection jobs, got {jobs}."
+        assert discovered is not None, "Discovered offering was not saved."
+        assert isolated_client is not None and isolated_client.id != tenant_id, "Isolated organization was not saved separately."
+        assert int(isolated_competitors or 0) == 0 and int(isolated_offerings or 0) == 0 and int(isolated_alerts or 0) == 0, "New tenant was not empty in PostgreSQL."
+        assert super_admin is not None and super_admin.role == RoleEnum.SUPER_ADMIN, "Super-admin identity was not saved."
+        assert "SENT" in notification_statuses, f"Email outbox status not persisted: {notification_statuses}"
+        print(json.dumps({
+            "tenant_id": str(tenant_id),
+            "isolated_tenant_id": str(isolated_id),
+            "competitor_id": str(competitor.id),
+            "source_id": str(source.id),
+            "offering_id": str(offering.id),
+            "match_id": str(match.id),
+            "snapshot_price": str(snapshot.current_price),
+            "observations": int(observations or 0),
+            "jobs": int(jobs or 0),
+            "discovered_sku": discovered.sku,
+            "source_circuit_state": source.circuit_state.value,
+            "notification_statuses": notification_statuses,
+            "price_alert_is_read": alert.is_read,
+            "circuit_alert_saved": True,
+            "super_admin_saved": True,
+            "isolated_tenant_empty": True
+        }))
+asyncio.run(main())
+"""
+    args = [
+        str(client_id), str(competitor_id), str(source_id), str(offering_id),
+        str(match_id), str(rule_id), str(circuit_rule_id), str(alert_id),
+        str(isolated_client_id), str(super_admin_email),
+    ]
+    result = subprocess.run([sys.executable, "-c", code, *args], capture_output=True,
+                            text=True, check=True, env=os.environ.copy())
+    json_lines = [line.strip() for line in result.stdout.splitlines() if line.strip().startswith("{")]
+    assert json_lines, result.stdout + " " + result.stderr
+    return json.loads(json_lines[-1])
+
+
 def main():
     SHOTS.mkdir(parents=True,exist_ok=True)
+    # A run must publish only screenshots captured by this run. Remove stale
+    # PNGs and old DB evidence left by a prior failed journey.
+    for stale_image in SHOTS.glob("*.png"):
+        stale_image.unlink()
+    (SHOTS / "postgres-evidence.json").unlink(missing_ok=True)
     MAILBOX.unlink(missing_ok=True)
     with sync_playwright() as p:
         browser=p.chromium.launch()
@@ -861,6 +974,15 @@ def main():
         assert home_dimensions["content"]<=home_dimensions["viewport"],{"dimensions":home_dimensions,"overflow":home_overflow}
         shot(mobile,"51-mobile-homepage.png")
         mobile_context.close()
+
+        database_evidence = verify_postgres_sync(
+            client_id, competitor_id, source_id, offering_id, match_id, rule_id,
+            circuit_rule_id, alert["id"], isolated_client_id, super_admin_email,
+        )
+        (SHOTS / "postgres-evidence.json").write_text(
+            json.dumps(database_evidence, indent=2), encoding="utf-8"
+        )
+        print("POSTGRESQL_READBACK " + json.dumps(database_evidence), flush=True)
         assert not BROWSER_ERRORS,"Frontend JavaScript errors: "+" | ".join(BROWSER_ERRORS)
         expected_names=[f"{i:02d}-"+name for i,name in [
             (0,"public-homepage.png"),(1,"registration-form.png"),(2,"verification-email-sent.png"),(3,"email-verification-page.png"),
