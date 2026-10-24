@@ -570,7 +570,20 @@ def main():
         mobile.set_viewport_size({"width":390,"height":844})
         mobile.goto(FRONTEND+"/welcome",wait_until="networkidle")
         dimensions=mobile.evaluate("() => ({viewport:document.documentElement.clientWidth,content:document.documentElement.scrollWidth})")
-        assert dimensions["content"]<=dimensions["viewport"],dimensions
+        overflow_diagnostics=mobile.evaluate("""() => Array.from(document.querySelectorAll("body *")).map(element => {
+          const rect=element.getBoundingClientRect();
+          const style=getComputedStyle(element);
+          return {
+            tag:element.tagName.toLowerCase(), id:element.id||"",
+            className:typeof element.className==="string"?element.className.slice(0,100):"",
+            text:(element.innerText||"").replace(/\\s+/g," ").slice(0,60),
+            left:Math.round(rect.left), right:Math.round(rect.right), width:Math.round(rect.width),
+            position:style.position, overflowX:style.overflowX
+          };
+        }).filter(item => item.width>0 && (item.right>innerWidth+1 || item.left< -1))
+          .sort((a,b)=>b.right-a.right).slice(0,30)""")
+        print("MOBILE_OVERFLOW_DIAGNOSTICS "+json.dumps({"dimensions":dimensions,"elements":overflow_diagnostics}),flush=True)
+        assert dimensions["content"]<=dimensions["viewport"],{"dimensions":dimensions,"overflow":overflow_diagnostics}
         shot(mobile,"45-mobile-homepage.png")
         assert not BROWSER_ERRORS,"Frontend JavaScript errors: "+" | ".join(BROWSER_ERRORS)
         expected_names=[f"{i:02d}-"+name for i,name in [
