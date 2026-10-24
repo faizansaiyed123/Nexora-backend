@@ -664,7 +664,7 @@ def main() -> None:
         viewer = run_async(create_role_user(client_id, RoleEnum.VIEWER, role_suffix))
         sign_out(page)
         sign_in(page, analyst, ROLE_PASSWORD)
-        assert get_api(page, "/v1/auth/me")["role"] == "ANALYST"
+        assert api_get(page, "/v1/auth/me")["role"] == "ANALYST"
         page.get_by_role("link", name="Competitors", exact=True).click()
         page.get_by_role("heading", name="Competitors", exact=True).wait_for()
         assert page.get_by_role("button", name="Add competitor", exact=True).count() == 0
@@ -680,7 +680,7 @@ def main() -> None:
         shot(page, "44-analyst-workspace.png")
         sign_out(page)
         sign_in(page, viewer, ROLE_PASSWORD)
-        assert get_api(page, "/v1/auth/me")["role"] == "VIEWER"
+        assert api_get(page, "/v1/auth/me")["role"] == "VIEWER"
         page.get_by_role("link", name="Offerings", exact=True).click()
         page.get_by_role("heading", name="Offerings", exact=True).wait_for()
         assert page.get_by_role("button", name="Add offering", exact=True).count() == 0

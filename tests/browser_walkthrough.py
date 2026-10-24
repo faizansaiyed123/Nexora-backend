@@ -44,7 +44,7 @@ def shot(page: Page, name: str):
 def choose(page: Page, label: str, option: str):
     field=page.locator("label.field").filter(has_text=label).last
     field.locator("button.select-trigger").click()
-    page.get_by_role("option",name=option,exact=True).last.click()
+    page.get_by_role("option",name=re.compile(rf"^{re.escape(option)}(?:\\s|$)")).last.click()
 
 def token(page: Page):
     value=page.evaluate("() => localStorage.getItem('nexora.access')")
