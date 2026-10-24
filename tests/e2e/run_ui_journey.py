@@ -21,7 +21,7 @@ from playwright.sync_api import Browser, Page, sync_playwright
 from sqlalchemy import func, select
 
 from backend.core.security import get_password_hash
-from backend.db.session import AsyncSessionLocal
+from backend.db.session import AsyncSessionLocal, engine
 from backend.models.alert import AlertLogModel, AlertRuleModel
 from backend.models.client import UserModel
 from backend.models.competitor import CompetitorModel, OfferingMatchModel, SourceModel
@@ -152,21 +152,23 @@ def sign_out(page: Page) -> None:
 
 async def create_role_user(client_id: uuid.UUID, role: RoleEnum, suffix: str) -> str:
     email = f"{role.value.lower()}-{suffix}@northstar.example.com"
-    async with AsyncSessionLocal() as session:
-        user = await session.scalar(select(UserModel).where(UserModel.email == email))
-        if user:
-            return email
-        session.add(UserModel(
-            client_id=client_id,
-            email=email,
-            full_name=f"Northstar {role.value.title()}",
-            hashed_password=get_password_hash(ROLE_PASSWORD),
-            role=role,
-            is_active=True,
-            email_verified=True,
-        ))
-        await session.commit()
-    return email
+    try:
+        async with AsyncSessionLocal() as session:
+            user = await session.scalar(select(UserModel).where(UserModel.email == email))
+            if not user:
+                session.add(UserModel(
+                    client_id=client_id,
+                    email=email,
+                    full_name=f"Northstar {role.value.title()}",
+                    hashed_password=get_password_hash(ROLE_PASSWORD),
+                    role=role,
+                    is_active=True,
+                    email_verified=True,
+                ))
+                await session.commit()
+        return email
+    finally:
+        await engine.dispose()
 
 
 async def verify_postgres(
@@ -543,7 +545,7 @@ def main() -> None:
 
         page.get_by_role("link", name="Jobs", exact=True).click()
         page.get_by_role("heading", name="Jobs", exact=True).last.wait_for()
-        page.get_by_text("ON DEMAND REFRESH", exact=False).wait_for()
+        page.get_by_text("ON DEMAND REFRESH", exact=False).first.wait_for()
         shot(page, "32-job-history.png")
         page.get_by_role("button", name="Details", exact=True).first.click()
         page.get_by_text("Job ID", exact=True).wait_for()
