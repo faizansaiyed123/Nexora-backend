@@ -339,7 +339,7 @@ def main():
         shot(page,"24-offering-match-form.png")
         match=submit(page,"Create match","/v1/offering-matches").json()
         match_id=match["id"]
-        page.get_by_text(HIGH_URL,exact=False).wait_for()
+        page.get_by_text(HIGH_URL,exact=False).first.wait_for()
         shot(page,"25-offering-match-created.png")
         with expect(page,"/v1/collections/run","POST") as collect1:
             page.locator("tbody tr").filter(has_text=OFFERING).first.get_by_title("Run collection",exact=True).click()
