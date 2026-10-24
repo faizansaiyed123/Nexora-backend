@@ -292,6 +292,18 @@ def main():
         shot(page,"12-source-settings.png")
         config=submit(page,"Save configuration",f"/v1/sources/{source_id}/configuration","PATCH",200).json()
         assert config["rate_limit_rpm"]==60 and config["max_retries"]==1
+
+        page.get_by_title("Configuration",exact=True).click()
+        page.get_by_label("Require JavaScript rendering").check()
+        js_config=submit(page,"Save configuration",f"/v1/sources/{source_id}/configuration","PATCH",200).json()
+        assert js_config["requires_javascript"] is True,js_config
+        page.get_by_title("Configuration",exact=True).click()
+        assert page.get_by_label("Require JavaScript rendering").is_checked()
+        shot(page,"13b-source-js-rendering-enabled.png")
+        page.get_by_label("Require JavaScript rendering").uncheck()
+        config=submit(page,"Save configuration",f"/v1/sources/{source_id}/configuration","PATCH",200).json()
+        assert config["requires_javascript"] is False,config
+
         page.get_by_title("Edit source",exact=True).click()
         page.get_by_label("Source name").fill(SOURCE+" Structured")
         source_edit=submit(page,"Save changes",f"/v1/sources/{source_id}","PATCH",200).json()
@@ -369,6 +381,23 @@ def main():
         assert imported["successful_count"]==2,imported
         page.get_by_text("Sony ULT WEAR Wireless Headphones",exact=True).wait_for()
         shot(page,"22-bulk-import-results.png")
+
+        # Row-level import validation persists valid rows while reporting blocked URLs.
+        page.get_by_role("button",name="Bulk import",exact=True).click()
+        import_with_one_rejected_row = [
+          {"name":"AWS EC2 Compute Optimized","offering_type":"PLAN","sku":"AWS-EC2-ONDEMAND-001","current_price":"1200.00","currency":"USD","market":"US","category":"Cloud Computing > Compute","description":"Compute-optimized cloud instance pricing example","attributes":{"brand":"Amazon Web Services","vcpu":16,"memory_gib":64}},
+          {"name":"Private Endpoint Price Test","offering_type":"PRODUCT","sku":"NXR-SSRF-BLOCKED-001","current_price":"0.99","currency":"USD","market":"US","category":"Security > Validation","url":"http://127.0.0.1:8000/v1/health","attributes":{"purpose":"invalid private-network URL must be rejected"}}
+        ]
+        page.get_by_label("Offering JSON").fill(json.dumps(import_with_one_rejected_row))
+        row_error_result=submit(page,"Import offerings","/v1/offerings/bulk",status=200).json()
+        assert row_error_result["successful_count"]==1 and row_error_result["failed_count"]==1,row_error_result
+        page.get_by_text("Bulk import results",exact=True).wait_for()
+        page.get_by_text("Row 2: Private Endpoint Price Test",exact=True).wait_for()
+        page.get_by_text("URL validation failed",exact=False).wait_for()
+        assert any(error["index"]==1 and "URL validation failed" in error["error"] for error in row_error_result["errors"]),row_error_result
+        shot(page,"22b-bulk-import-row-errors.png")
+        page.get_by_role("button",name="Dismiss import results",exact=True).click()
+
         csv_path,json_path=Path("/tmp/nexora-catalog.csv"),Path("/tmp/nexora-catalog.json")
         with page.expect_download() as csv_dl:
             page.get_by_role("button",name="CSV",exact=True).click()
@@ -388,6 +417,104 @@ def main():
         page.get_by_placeholder("Search name, SKU, category…").fill("")
         page.get_by_text(OFFERING,exact=True).wait_for()
         shot(page,"23-catalog-import-export-archive.png")
+
+        # Single-item archive is a distinct UI action from bulk archive.
+        page.get_by_placeholder("Search name, SKU, category…").fill("Sony LinkBuds S")
+        linkbuds_row=page.locator("tbody tr").filter(has_text="Sony LinkBuds S").first
+        linkbuds_row.wait_for()
+        linkbuds_id=api_get(page,"/v1/offerings?q=Sony%20LinkBuds%20S&page=1&page_size=20")["items"][0]["id"]
+        with expect(page,f"/v1/offerings/{linkbuds_id}","DELETE") as single_archive:
+            linkbuds_row.get_by_title("Archive",exact=True).click()
+        assert single_archive.value.status==204,single_archive.value.text()
+        archived_linkbuds=get_api(page,f"/v1/offerings?q=Sony%20LinkBuds%20S&include_archived=true&page=1&page_size=20")
+        assert any(row["id"]==linkbuds_id and row["is_archived"] for row in archived_linkbuds["items"]),archived_linkbuds
+        page.get_by_placeholder("Search name, SKU, category…").fill("")
+        page.get_by_text(OFFERING,exact=True).wait_for()
+        shot(page,"23b-single-offering-archived.png")
+
+        # A fixture catalogue gives the real UI/API a two-page list without relying
+        # on any live retailer returning a stable catalogue size.
+        catalog_models = [
+          ("Bose QuietComfort Ultra Headphones","Bose","Audio > Headphones",429.99),
+          ("Bose QuietComfort Headphones","Bose","Audio > Headphones",349.99),
+          ("Bose QuietComfort Ultra Earbuds","Bose","Audio > Earbuds",299.99),
+          ("Bose SoundLink Max Speaker","Bose","Audio > Speakers",399.99),
+          ("Apple AirPods Pro (2nd generation) USB-C","Apple","Audio > Earbuds",249.99),
+          ("Apple AirPods Max (USB-C)","Apple","Audio > Headphones",549.99),
+          ("Beats Studio Pro","Beats","Audio > Headphones",349.99),
+          ("Beats Solo 4","Beats","Audio > Headphones",199.99),
+          ("Samsung Galaxy Buds3 Pro","Samsung","Audio > Earbuds",249.99),
+          ("Samsung Galaxy Buds FE","Samsung","Audio > Earbuds",99.99),
+          ("Samsung Galaxy Buds3","Samsung","Audio > Earbuds",179.99),
+          ("Google Pixel Buds Pro 2","Google","Audio > Earbuds",229.99),
+          ("Google Pixel Buds A-Series","Google","Audio > Earbuds",99.99),
+          ("Sennheiser Momentum 4 Wireless","Sennheiser","Audio > Headphones",349.99),
+          ("Sennheiser HD 660S2","Sennheiser","Audio > Headphones",599.99),
+          ("Sennheiser Momentum True Wireless 4","Sennheiser","Audio > Earbuds",299.99),
+          ("JBL Tour One M2","JBL","Audio > Headphones",299.99),
+          ("JBL Live 770NC","JBL","Audio > Headphones",199.99),
+          ("JBL Tour Pro 3","JBL","Audio > Earbuds",299.99),
+          ("JBL Charge 5","JBL","Audio > Speakers",179.99),
+          ("JBL Flip 6","JBL","Audio > Speakers",129.99),
+          ("Anker Soundcore Space Q45","Anker","Audio > Headphones",149.99),
+          ("Anker Soundcore Liberty 4 NC","Anker","Audio > Earbuds",99.99),
+          ("Anker Soundcore Motion X600","Anker","Audio > Speakers",199.99),
+          ("Logitech MX Master 3S","Logitech","Computing > Mice",99.99),
+          ("Logitech MX Keys S","Logitech","Computing > Keyboards",109.99),
+          ("Logitech G Pro X Superlight 2","Logitech","Gaming > Mice",159.99),
+          ("Dell UltraSharp U2723QE","Dell","Computing > Monitors",629.99),
+          ("Dell XPS 13","Dell","Computing > Laptops",1199.99),
+          ("Dell P2723DE","Dell","Computing > Monitors",399.99),
+          ("Lenovo ThinkPad X1 Carbon Gen 12","Lenovo","Computing > Laptops",1899.99),
+          ("Lenovo ThinkPad T14 Gen 5","Lenovo","Computing > Laptops",1399.99),
+          ("Lenovo Yoga 9i Gen 9","Lenovo","Computing > Laptops",1499.99),
+          ("HP Spectre x360 14","HP","Computing > Laptops",1499.99),
+          ("HP EliteBook 840 G11","HP","Computing > Laptops",1599.99),
+          ("ASUS Zenbook 14 OLED","ASUS","Computing > Laptops",999.99),
+          ("ASUS ROG Zephyrus G16","ASUS","Gaming > Laptops",1999.99),
+          ("Microsoft Surface Laptop 7","Microsoft","Computing > Laptops",1299.99),
+          ("Microsoft Surface Pro 11","Microsoft","Computing > Tablets",999.99),
+          ("Acer Swift Go 14","Acer","Computing > Laptops",799.99),
+          ("Acer Predator Helios Neo 16","Acer","Gaming > Laptops",1399.99),
+          ("Xiaomi Redmi Note 13 Pro+","Xiaomi","Mobile > Phones",399.99),
+          ("Xiaomi Pad 6","Xiaomi","Mobile > Tablets",349.99),
+          ("OnePlus 12","OnePlus","Mobile > Phones",799.99),
+          ("OnePlus Buds Pro 3","OnePlus","Audio > Earbuds",179.99),
+          ("Dyson V15 Detect","Dyson","Home > Floor Care",749.99),
+          ("Philips Airfryer 3000 Series","Philips","Home > Kitchen",149.99),
+          ("Canon EOS R6 Mark II","Canon","Photography > Cameras",2499.99),
+          ("Fujifilm X-T5","Fujifilm","Photography > Cameras",1699.99),
+          ("Garmin Forerunner 965","Garmin","Wearables > Sports Watches",599.99),
+          ("TP-Link Deco XE75 Mesh Wi-Fi System","TP-Link","Networking > Wi-Fi",299.99)
+        ]
+        pagination_payload = [
+          {"name":name,"offering_type":"PRODUCT","sku":f"NXR-PAGE-{index:03d}","current_price":price,"currency":"USD","market":"US","category":category,"description":"Illustrative catalog record used to exercise Nexora pagination in an isolated review workspace.","attributes":{"brand":brand,"review_fixture":True}}
+          for index,(name,brand,category,price) in enumerate(catalog_models,1)
+        ]
+        assert len(pagination_payload)==51,len(pagination_payload)
+        page.get_by_role("button",name="Bulk import",exact=True).click()
+        page.get_by_label("Offering JSON").fill(json.dumps(pagination_payload))
+        pagination_import=submit(page,"Import offerings","/v1/offerings/bulk",status=200).json()
+        assert pagination_import["successful_count"]==51 and pagination_import["failed_count"]==0,pagination_import
+        page.get_by_role("button",name="Dismiss import results",exact=True).click()
+        page.get_by_text("Page 1 of 2",exact=True).wait_for()
+        assert page.locator("tbody tr").count()==50,page.locator("tbody tr").count()
+        page.get_by_role("button",name="Next",exact=True).click()
+        page.get_by_text("Page 2 of 2",exact=True).wait_for()
+        assert page.locator("tbody tr").count()==4,page.locator("tbody tr").count()
+        shot(page,"23c-catalog-pagination.png")
+        page.get_by_role("button",name="Previous",exact=True).click()
+        page.get_by_text("Page 1 of 2",exact=True).wait_for()
+
+        # Type filtering uses the persisted plan record created by the earlier partial import.
+        page.get_by_role("button",name="All types",exact=True).click()
+        page.get_by_role("option",name="PLAN",exact=True).last.click()
+        page.get_by_text("AWS EC2 Compute Optimized",exact=True).wait_for()
+        assert page.locator("tbody tr").count()==1
+        shot(page,"23d-catalog-type-filter.png")
+        page.get_by_role("button",name="PLAN",exact=True).click()
+        page.get_by_role("option",name="All types",exact=True).last.click()
+        page.get_by_text(OFFERING,exact=True).wait_for()
 
         # A matched competitor URL creates a real price observation and snapshot.
         page.get_by_role("link",name="Matches",exact=True).click()
@@ -674,7 +801,7 @@ def main():
             (40,"password-reset-form.png"),(41,"password-reset-complete.png"),(42,"dashboard-after-reset.png"),(43,"analyst-workspace.png"),
             (44,"viewer-read-only-workspace.png"),(45,"mobile-dashboard.png"),(46,"mobile-homepage.png"),
         ]]
-        expected_names += ["29b-circuit-breaker-rule-form.png","29c-source-circuit-open.png","29d-circuit-breaker-alert.png"]
+        expected_names += ["13b-source-js-rendering-enabled.png","22b-bulk-import-row-errors.png","23b-single-offering-archived.png","23c-catalog-pagination.png","23d-catalog-type-filter.png","29b-circuit-breaker-rule-form.png","29c-source-circuit-open.png","29d-circuit-breaker-alert.png"]
         missing=[name for name in expected_names if not (SHOTS/name).is_file()]
         assert not missing,"Missing visitor journey screens: "+str(missing)
         print(f"VISITOR JOURNEY COMPLETE: {len(expected_names)} screenshots captured; UI, API, PostgreSQL and mail flows completed.",flush=True)
