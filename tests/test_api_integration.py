@@ -16,6 +16,8 @@ from sqlalchemy import select
 from backend.core.config import get_settings
 from backend.core.security import get_password_hash
 from backend.core.rate_limit import TokenSessionStore
+from backend.api.v1 import collections as collections_route
+from backend.services.collection_service import CollectionResult, CollectionService
 from backend.db.session import AsyncSessionLocal
 from backend.main import app
 from backend.models.alert import AlertLogModel
@@ -75,7 +77,7 @@ async def _create_role_user(client_id: uuid.UUID, role: RoleEnum, suffix: str) -
 
 
 @pytest.mark.asyncio
-async def test_full_tenant_api_and_database_workflow() -> None:
+async def test_full_tenant_api_and_database_workflow(monkeypatch: pytest.MonkeyPatch) -> None:
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://nexora.test",
@@ -953,6 +955,94 @@ async def test_full_tenant_api_and_database_workflow() -> None:
             json={"email": admin_email, "password": UPDATED_PASSWORD},
         )
         assert new_password.status_code == 200, new_password.text
+
+        # A repeated collection failure must persist a circuit-breaker alert.
+        async def failed_collect(
+            self,
+            url: str,
+            timeout: float = 30.0,
+            headers=None,
+            custom_selectors=None,
+            max_retries: int = 0,
+        ) -> CollectionResult:
+            return CollectionResult(
+                success=False,
+                url=url,
+                status_code=404,
+                response_time_ms=4,
+                price=None,
+                currency=None,
+                availability=None,
+                attributes={"http_status": 404},
+                extraction_status="HTTP_ERROR",
+                error="HTTP 404",
+            )
+
+        async def no_render(*args, **kwargs):
+            return None
+
+        monkeypatch.setattr(CollectionService, "collect", failed_collect)
+        monkeypatch.setattr(collections_route, "render_page", no_render)
+
+        circuit_rule_response = await client.post(
+            "/v1/alerts/rules",
+            headers=headers,
+            json={
+                "name": f"Source circuit opened {suffix}",
+                "alert_type": "CIRCUIT_BREAKER_TRIPPED",
+                "offering_id": offering_id,
+                "threshold_value": None,
+                "target_channels": {},
+                "cooldown_minutes": 60,
+                "is_active": True,
+            },
+        )
+        assert circuit_rule_response.status_code == 201, circuit_rule_response.text
+        circuit_rule_id = circuit_rule_response.json()["id"]
+
+        for attempt in range(1, 6):
+            failed_collection = await client.post(
+                "/v1/collections/run",
+                headers=headers,
+                params={"offering_match_id": match_id},
+            )
+            assert failed_collection.status_code == 502, (
+                f"Collection failure {attempt} should be persisted as a failed run: "
+                f"HTTP {failed_collection.status_code}: {failed_collection.text}"
+            )
+
+        circuit_source_readback = await client.get(
+            f"/v1/sources/{source_id}", headers=headers
+        )
+        assert circuit_source_readback.status_code == 200, circuit_source_readback.text
+        assert circuit_source_readback.json()["failure_count"] == 5
+        assert circuit_source_readback.json()["circuit_state"] == "OPEN"
+        assert circuit_source_readback.json()["health_status"] == "FAILING"
+
+        circuit_logs_response = await client.get("/v1/alerts/logs", headers=headers)
+        assert circuit_logs_response.status_code == 200, circuit_logs_response.text
+        circuit_alerts = [
+            row for row in circuit_logs_response.json()
+            if row["alert_rule_id"] == circuit_rule_id
+            and row["title"] == "Competitor source circuit breaker tripped"
+        ]
+        assert len(circuit_alerts) == 1, circuit_alerts
+        assert circuit_alerts[0]["payload_snapshot"]["event"] == "CIRCUIT_BREAKER_TRIPPED"
+        assert circuit_alerts[0]["payload_snapshot"]["source_name"] == "Datadog Official Pricing"
+
+        blocked_by_circuit = await client.post(
+            "/v1/collections/run",
+            headers=headers,
+            params={"offering_match_id": match_id},
+        )
+        assert blocked_by_circuit.status_code == 503, blocked_by_circuit.text
+        job_list_after_failures = await client.get("/v1/jobs", headers=headers)
+        assert job_list_after_failures.status_code == 200, job_list_after_failures.text
+        failed_jobs = [
+            row for row in job_list_after_failures.json()
+            if row["source_id"] == source_id and row["status"] == "FAILED"
+        ]
+        assert len(failed_jobs) == 5, failed_jobs
 
         # Cleanup uses the supported delete/archive lifecycle.
         assert (await client.delete(f"/v1/alerts/rules/{rule_id}", headers=headers)).status_code == 204
