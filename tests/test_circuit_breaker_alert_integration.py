@@ -7,6 +7,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from backend.api.v1 import collections as collections_route
+from backend.core.config import get_settings
 from backend.main import app
 from backend.services.collection_service import CollectionResult, CollectionService
 
@@ -42,6 +43,10 @@ async def test_circuit_breaker_trip_creates_a_persistent_alert(
     async def no_render(*args, **kwargs):
         return None
 
+    # This test targets circuit behavior, not Redis connection-pool lifecycle; keep the
+    # request limiter disabled so each pytest event loop does not reuse a Redis client
+    # created by a preceding async test.
+    monkeypatch.setattr(get_settings(), "rate_limit_enabled", False)
     monkeypatch.setattr(CollectionService, "collect", failed_collect)
     monkeypatch.setattr(collections_route, "render_page", no_render)
 
