@@ -296,7 +296,7 @@ def main() -> None:
 
         # Competitor directory, create/edit, duplicate guard and tenant boundary.
         page.get_by_role("link", name="Competitors", exact=True).click()
-        page.get_by_role("heading", name="Competitors", exact=True).wait_for()
+        page.get_by_role("heading", name="Competitors", exact=True).last.wait_for()
         shot(page, "07-competitors.png")
         page.get_by_role("button", name="Add competitor", exact=True).click()
         page.get_by_label("Name").fill(COMPETITOR)
@@ -527,7 +527,7 @@ def main() -> None:
         shot(page, "31-alert-email-delivered.png")
 
         page.get_by_role("link", name="Jobs", exact=True).click()
-        page.get_by_role("heading", name="Jobs", exact=True).wait_for()
+        page.get_by_role("heading", name="Jobs", exact=True).last.wait_for()
         page.get_by_text("ON DEMAND REFRESH", exact=False).wait_for()
         shot(page, "32-job-history.png")
         page.get_by_role("button", name="Details", exact=True).first.click()
