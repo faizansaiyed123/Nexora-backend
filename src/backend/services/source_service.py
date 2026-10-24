@@ -204,12 +204,14 @@ class SourceService:
                 update_data["collection_method"] == CollectionMethodEnum.PLAYWRIGHT_BROWSER
             )
             if source.configuration is None and requires_javascript:
-                db.add(
-                    SourceConfigurationModel(
-                        source_id=source.id,
-                        requires_javascript=True,
-                    )
+                configuration = SourceConfigurationModel(
+                    source_id=source.id,
+                    requires_javascript=True,
                 )
+                # The relationship may already be loaded as None by get_by_id;
+                # update the in-memory relationship as well as the database row.
+                source.configuration = configuration
+                db.add(configuration)
             elif source.configuration is not None:
                 source.configuration.requires_javascript = requires_javascript
 
