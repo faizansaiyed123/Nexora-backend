@@ -36,15 +36,15 @@ FULL_NAME = "Alex Morgan"
 OFFERING_NAME = "Sony WH-1000XM5 Wireless Headphones"
 DISCOVERED_NAME = "Sony WF-1000XM5 Truly Wireless Noise Canceling Earbuds"
 HIGH_URL = (
-    "https://raw.githubusercontent.com/faizansaiyed123/Nexora-backend/main/"
+    "https://cdn.jsdelivr.net/gh/faizansaiyed123/Nexora-backend@main/"
     "tests/fixtures/retail-price-high.html"
 )
 LOW_URL = (
-    "https://raw.githubusercontent.com/faizansaiyed123/Nexora-backend/main/"
+    "https://cdn.jsdelivr.net/gh/faizansaiyed123/Nexora-backend@main/"
     "tests/fixtures/retail-price-low.html"
 )
 DISCOVERY_URL = (
-    "https://raw.githubusercontent.com/faizansaiyed123/Nexora-backend/main/"
+    "https://cdn.jsdelivr.net/gh/faizansaiyed123/Nexora-backend@main/"
     "tests/fixtures/retail-discovery-product.html"
 )
 js_errors: list[str] = []
@@ -225,7 +225,7 @@ def main() -> None:
         shot(page, "07-competitors-empty.png")
         page.get_by_role("button", name="Add competitor", exact=True).click()
         page.get_by_label("Name").fill("Retail Product Reference")
-        page.get_by_label("Domain").fill("raw.githubusercontent.com")
+        page.get_by_label("Domain").fill("cdn.jsdelivr.net")
         with page.expect_response(lambda r: response_matches(r, "/v1/competitors", "POST")) as event:
             page.get_by_role("button", name="Save competitor", exact=True).click()
         assert event.value.status == 201, event.value.text()
@@ -235,7 +235,7 @@ def main() -> None:
 
         page.get_by_role("button", name="Add competitor", exact=True).click()
         page.get_by_label("Name").fill("Duplicate Raw Host")
-        page.get_by_label("Domain").fill("raw.githubusercontent.com")
+        page.get_by_label("Domain").fill("cdn.jsdelivr.net")
         with page.expect_response(lambda r: response_matches(r, "/v1/competitors", "POST")) as event:
             page.get_by_role("button", name="Save competitor", exact=True).click()
         assert event.value.status == 403, event.value.text()
