@@ -104,7 +104,7 @@ def submit(page: Page,label: str,path: str,method="POST",status=201):
 
 def login(page,email,password):
     page.get_by_label("Work email").fill(email)
-    page.get_by_label("Password").fill(password)
+    page.locator('input[autocomplete="current-password"]').fill(password)
     response=submit(page,"Sign in","/v1/auth/login",status=200)
     assert response.json().get("access_token")
     page.get_by_role("heading",name="Dashboard",exact=True).wait_for(timeout=15000)
@@ -158,7 +158,7 @@ def main():
         page.get_by_label("Organization name").fill(ORG)
         page.get_by_label("Your full name").fill(PERSON)
         page.get_by_label("Work email").fill(EMAIL)
-        page.get_by_label("Password").fill(PASSWORD)
+        page.locator('input[autocomplete="new-password"]').fill(PASSWORD)
         mail_start=len(emails())
         registration=submit(page,"Create workspace","/v1/auth/register",status=201)
         assert registration.json()["email_verification_required"] is True
