@@ -244,7 +244,7 @@ def main():
         page.get_by_role("button",name="Add offering",exact=True).click()
         page.get_by_label("Name").fill(OFFERING)
         choose(page,"Offering type","PRODUCT")
-        page.get_by_label("SKU").fill("WH1000XM5-BLK")
+        page.get_by_label("SKU", exact=True).fill("WH1000XM5-BLK")
         page.get_by_label("Current price").fill("449.99")
         page.get_by_label("Currency").fill("USD")
         page.get_by_label("Market").fill("US")
