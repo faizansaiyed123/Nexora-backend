@@ -592,7 +592,6 @@ def main():
         print(f"VISITOR JOURNEY COMPLETE: {len(expected_names)} screenshots captured; UI, API, PostgreSQL and mail flows completed.",flush=True)
         context.close()
         browser.close()
-    ASYNC_LOOP.close()
 
 if __name__=="__main__":
     main()
