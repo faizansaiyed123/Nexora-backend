@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 import time
+import threading
 from email import message_from_string
 from pathlib import Path
 from urllib.parse import urlparse
@@ -148,6 +149,24 @@ def sign_out(page: Page) -> None:
     page.locator("button.profile-trigger").click()
     page.get_by_text("Sign out", exact=True).click()
     page.get_by_label("Work email").wait_for(timeout=15000)
+
+
+def run_async(coro):
+    """Run one SQLAlchemy coroutine off Playwright's active sync-event-loop thread."""
+    outcome: dict[str, object] = {}
+
+    def run() -> None:
+        try:
+            outcome["value"] = asyncio.run(coro)
+        except BaseException as exc:
+            outcome["error"] = exc
+
+    thread = threading.Thread(target=run, name="nexora-db-fixture", daemon=True)
+    thread.start()
+    thread.join()
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["value"]
 
 
 async def create_role_user(client_id: uuid.UUID, role: RoleEnum, suffix: str) -> str:
@@ -641,8 +660,8 @@ def main() -> None:
 
         # Real persisted role users: analyst can read/run; viewer is read-only.
         role_suffix = uuid.uuid4().hex[:8]
-        analyst = asyncio.run(create_role_user(client_id, RoleEnum.ANALYST, role_suffix))
-        viewer = asyncio.run(create_role_user(client_id, RoleEnum.VIEWER, role_suffix))
+        analyst = run_async(create_role_user(client_id, RoleEnum.ANALYST, role_suffix))
+        viewer = run_async(create_role_user(client_id, RoleEnum.VIEWER, role_suffix))
         sign_out(page)
         sign_in(page, analyst, ROLE_PASSWORD)
         page.get_by_role("link", name="Competitors", exact=True).click()
@@ -674,7 +693,7 @@ def main() -> None:
         assert dimensions["content"] <= dimensions["viewport"], dimensions
         shot(mobile, "46-mobile-homepage.png")
 
-        persisted = asyncio.run(verify_postgres(
+        persisted = run_async(verify_postgres(
             client_id, competitor_id, source_id, offering_id, match_id, rule_id,
             alert["id"], "WF1000XM5-BLK",
         ))
