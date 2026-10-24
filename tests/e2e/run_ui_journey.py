@@ -462,7 +462,7 @@ def main() -> None:
             page.get_by_role("button", name="Create match", exact=True).click()
         assert event.value.status == 201, event.value.text()
         match_id = event.value.json()["id"]
-        page.get_by_text(PRICE_HIGH_URL, exact=False).wait_for()
+        page.get_by_role("link", name=PRICE_HIGH_URL, exact=True).wait_for()
         shot(page, "26-match-created.png")
         row = page.locator("tbody tr").filter(has_text=OFFERING).first
         with page.expect_response(lambda r: "/v1/collections/run" in r.url and r.request.method == "POST") as event:
