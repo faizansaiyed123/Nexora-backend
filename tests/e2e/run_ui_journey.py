@@ -604,9 +604,9 @@ def main() -> None:
         with page.expect_response(lambda r: r.url.endswith("/v1/auth/change-password") and r.request.method == "POST") as event:
             page.get_by_role("button", name="Update password", exact=True).click()
         assert event.value.status == 200, event.value.text()
-        old_login = page.request.post(API_URL + "/v1/auth/login", data=json.dumps({"email": EMAIL, "password": PASSWORD}), headers={"Content-Type": "application/json"})
+        old_login = page.request.post(API_URL + "/v1/auth/login", data=dict(email=EMAIL, password=PASSWORD), headers={"Content-Type": "application/json"})
         assert old_login.status == 401, old_login.text()
-        new_login = page.request.post(API_URL + "/v1/auth/login", data=json.dumps({"email": EMAIL, "password": CHANGED_PASSWORD}), headers={"Content-Type": "application/json"})
+        new_login = page.request.post(API_URL + "/v1/auth/login", data=dict(email=EMAIL, password=CHANGED_PASSWORD), headers={"Content-Type": "application/json"})
         assert new_login.status == 200, new_login.text()
         shot(page, "39-password-changed.png")
 
@@ -645,7 +645,7 @@ def main() -> None:
         assert page.get_by_role("button", name="Add competitor", exact=True).count() == 0
         denied = page.request.post(API_URL + "/v1/competitors",
             headers={"Authorization": f"Bearer {token(page)}", "Content-Type": "application/json"},
-            data=json.dumps({"name":"Unauthorized Analyst Write","domain":"forbidden-analyst.example"}))
+            data=dict(name="Unauthorized Analyst Write", domain="forbidden-analyst.example"))
         assert denied.status == 403, denied.text()
         page.get_by_role("link", name="Discovery", exact=True).click()
         assert page.get_by_role("button", name="Run discovery", exact=True).is_visible()
@@ -658,7 +658,7 @@ def main() -> None:
         assert page.get_by_role("button", name="Dynamic fields", exact=True).count() == 0
         denied = page.request.post(API_URL + "/v1/competitors",
             headers={"Authorization": f"Bearer {token(page)}", "Content-Type": "application/json"},
-            data=json.dumps({"name":"Unauthorized Viewer Write","domain":"forbidden-viewer.example"}))
+            data=dict(name="Unauthorized Viewer Write", domain="forbidden-viewer.example"))
         assert denied.status == 403, denied.text()
         shot(page, "45-viewer-read-only.png")
 
