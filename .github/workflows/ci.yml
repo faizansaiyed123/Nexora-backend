@@ -17,6 +17,12 @@ jobs:
       JWT_SECRET_KEY: test-only-nexora-ci-secret-32-characters-minimum
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/nexora
       REDIS_URL: redis://localhost:6379/0
+      ENVIRONMENT: development
+      EMAIL_VERIFICATION_BYPASS: "true"
+      RATE_LIMIT_LOGIN_PER_MINUTE: "100"
+      RATE_LIMIT_REGISTER_PER_HOUR: "100"
+      RATE_LIMIT_FORGOT_PASSWORD_PER_HOUR: "100"
+      RATE_LIMIT_RESEND_VERIFICATION_PER_HOUR: "100"
     services:
       postgres:
         image: postgres:18.6-alpine
