@@ -339,7 +339,17 @@ def main():
         assert registration.json()["email_verification_required"] is True
         page.get_by_role("heading",name="Verification required",exact=True).wait_for()
         shot(page,"02-verification-email-sent.png")
-        verify_url=email_link(wait_email("Verify your Nexora account",EMAIL,mail_start),"verify-email")
+        initial_verify_url=email_link(wait_email("Verify your Nexora account",EMAIL,mail_start),"verify-email")
+        assert urlparse(initial_verify_url).path.endswith("/verify-email")
+
+        # Resending verification is an actual account action: it returns a
+        # second email and the newest one-time link is used for activation.
+        resend_start=len(emails())
+        resend=submit(page,"Resend email","/v1/auth/resend-verification",status=200)
+        assert resend.status==200,resend.text()
+        verify_url=email_link(wait_email("Verify your Nexora account",EMAIL,resend_start),"verify-email")
+        page.get_by_text("A new verification link has been sent. Check your inbox.",exact=True).wait_for()
+        shot(page,"02b-verification-email-resent.png")
         assert urlparse(verify_url).path.endswith("/verify-email")
         page.goto(verify_url,wait_until="networkidle")
         shot(page,"03-email-verification-page.png")
@@ -643,6 +653,29 @@ def main():
         match_id=match["id"]
         page.get_by_text(HIGH_URL,exact=False).first.wait_for()
         shot(page,"25-offering-match-created.png")
+
+        # Exercise the Matches screen's delete action with an alternative URL,
+        # then confirm the row is absent after a fresh API read. This temporary
+        # record is removed before the primary match changes to the same URL.
+        page.get_by_role("button",name="Add match",exact=True).click()
+        choose(page,"Offering",OFFERING)
+        choose(page,"Source",SOURCE+" Structured")
+        page.get_by_label("Competitor target URL").fill(LOW_URL)
+        choose(page,"Status","SUGGESTED")
+        page.get_by_label("Confidence (0–1)").fill("0.50")
+        temporary_match=submit(page,"Create match","/v1/offering-matches").json()
+        temporary_match_id=temporary_match["id"]
+        assert any(row["id"]==temporary_match_id for row in get_api(page,"/v1/offering-matches"))
+        page.locator("tbody tr").filter(has_text=LOW_URL).wait_for()
+        shot(page,"25b-temporary-match-created.png")
+        temporary_row=page.locator("tbody tr").filter(has_text=LOW_URL).first
+        with expect(page,f"/v1/offering-matches/{temporary_match_id}","DELETE") as delete_match_event:
+            temporary_row.locator("button.danger-icon").click()
+        assert delete_match_event.value.status==204,delete_match_event.value.text()
+        assert all(row["id"]!=temporary_match_id for row in get_api(page,"/v1/offering-matches"))
+        assert page.locator("tbody tr").filter(has_text=LOW_URL).count()==0
+        shot(page,"25c-temporary-match-deleted.png")
+
         with expect(page,"/v1/collections/run","POST") as collect1:
             page.locator("tbody tr").filter(has_text=OFFERING).first.get_by_title("Run collection",exact=True).click()
         first_response=collect1.value
@@ -1054,7 +1087,7 @@ def main():
             (47,"isolated-tenant-competitors.png"),(48,"isolated-tenant-catalog.png"),(49,"isolated-tenant-alerts.png"),
             (50,"mobile-dashboard.png"),(51,"mobile-homepage.png"),
         ]]
-        expected_names += ["13b-source-js-rendering-enabled.png","22b-bulk-import-row-errors.png","23b-single-offering-archived.png","23c-catalog-pagination.png","23d-catalog-type-filter.png","29b-circuit-breaker-rule-form.png","29c-source-circuit-open.png","29d-circuit-breaker-alert.png","45b-super-admin-source-created.png","45c-super-admin-source-deleted.png","45d-super-admin-competitor-deleted.png","45e-super-admin-alert-rule-deleted.png"]
+        expected_names += ["02b-verification-email-resent.png","13b-source-js-rendering-enabled.png","22b-bulk-import-row-errors.png","23b-single-offering-archived.png","23c-catalog-pagination.png","23d-catalog-type-filter.png","25b-temporary-match-created.png","25c-temporary-match-deleted.png","29b-circuit-breaker-rule-form.png","29c-source-circuit-open.png","29d-circuit-breaker-alert.png","45b-super-admin-source-created.png","45c-super-admin-source-deleted.png","45d-super-admin-competitor-deleted.png","45e-super-admin-alert-rule-deleted.png"]
         missing=[name for name in expected_names if not (SHOTS/name).is_file()]
         assert not missing,"Missing visitor journey screens: "+str(missing)
         print(f"VISITOR JOURNEY COMPLETE: {len(expected_names)} screenshots captured; UI, API, PostgreSQL and mail flows completed.",flush=True)
