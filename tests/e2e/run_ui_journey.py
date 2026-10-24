@@ -134,8 +134,8 @@ def mail_link(body: str, route: str) -> str:
 
 
 def sign_in(page: Page, email: str, password: str) -> None:
-    page.get_by_label("Work email").fill(email)
-    page.get_by_label("Password").fill(password)
+    page.get_by_label("Work email", exact=True).fill(email)
+    page.get_by_label("Password", exact=True).fill(password)
     with page.expect_response(lambda r: r.url.endswith("/v1/auth/login") and r.request.method == "POST") as event:
         page.get_by_role("button", name=re.compile("Sign in")).click()
     assert event.value.status == 200, event.value.text()
@@ -145,7 +145,7 @@ def sign_in(page: Page, email: str, password: str) -> None:
 def sign_out(page: Page) -> None:
     page.locator("button.profile-trigger").click()
     page.get_by_text("Sign out", exact=True).click()
-    page.get_by_label("Work email").wait_for(timeout=15000)
+    page.get_by_label("Work email", exact=True).wait_for(timeout=15000)
 
 
 async def create_role_user(client_id: uuid.UUID, role: RoleEnum, suffix: str) -> str:
@@ -259,12 +259,12 @@ def main() -> None:
         page.get_by_role("heading", name=re.compile("Understand the market")).wait_for()
         shot(page, "00-public-homepage.png")
         page.get_by_role("link", name=re.compile("Create workspace")).click()
-        page.get_by_label("Organization name").wait_for()
+        page.get_by_label("Organization name", exact=True).wait_for()
         shot(page, "01-registration-form.png")
-        page.get_by_label("Organization name").fill(ORGANIZATION)
-        page.get_by_label("Your full name").fill(FULL_NAME)
-        page.get_by_label("Work email").fill(EMAIL)
-        page.get_by_label("Password").fill(PASSWORD)
+        page.get_by_label("Organization name", exact=True).fill(ORGANIZATION)
+        page.get_by_label("Your full name", exact=True).fill(FULL_NAME)
+        page.get_by_label("Work email", exact=True).fill(EMAIL)
+        page.get_by_label("Password", exact=True).fill(PASSWORD)
         before_verification = len(mailbox())
         with page.expect_response(lambda r: r.url.endswith("/v1/auth/register") and r.request.method == "POST") as event:
             page.get_by_role("button", name=re.compile("Create workspace")).click()
@@ -283,7 +283,7 @@ def main() -> None:
         page.get_by_role("link", name="Continue to sign in", exact=True).wait_for()
         shot(page, "04-email-verified.png")
         page.get_by_role("link", name="Continue to sign in", exact=True).click()
-        page.get_by_label("Work email").wait_for()
+        page.get_by_label("Work email", exact=True).wait_for()
         shot(page, "05-login.png")
         sign_in(page, EMAIL, PASSWORD)
         shot(page, "06-dashboard-empty-workspace.png")
@@ -298,8 +298,8 @@ def main() -> None:
         page.get_by_role("heading", name="Competitors", exact=True).wait_for()
         shot(page, "07-competitors.png")
         page.get_by_role("button", name="Add competitor", exact=True).click()
-        page.get_by_label("Name").fill(COMPETITOR)
-        page.get_by_label("Domain").fill("raw.githubusercontent.com")
+        page.get_by_label("Name", exact=True).fill(COMPETITOR)
+        page.get_by_label("Domain", exact=True).fill("raw.githubusercontent.com")
         shot(page, "08-competitor-form.png")
         with page.expect_response(lambda r: r.url.endswith("/v1/competitors") and r.request.method == "POST") as event:
             page.get_by_role("button", name="Save competitor", exact=True).click()
@@ -308,8 +308,8 @@ def main() -> None:
         page.get_by_text(COMPETITOR, exact=True).wait_for()
         shot(page, "09-competitor-created.png")
         page.get_by_role("button", name="Add competitor", exact=True).click()
-        page.get_by_label("Name").fill("Duplicate Product Reference")
-        page.get_by_label("Domain").fill("raw.githubusercontent.com")
+        page.get_by_label("Name", exact=True).fill("Duplicate Product Reference")
+        page.get_by_label("Domain", exact=True).fill("raw.githubusercontent.com")
         with page.expect_response(lambda r: r.url.endswith("/v1/competitors") and r.request.method == "POST") as event:
             page.get_by_role("button", name="Save competitor", exact=True).click()
         assert event.value.status == 403, event.value.text()
@@ -318,7 +318,7 @@ def main() -> None:
         page.get_by_role("button", name="Cancel", exact=True).click()
         competitor_row = page.locator("tbody tr").filter(has_text=COMPETITOR).first
         competitor_row.locator("button").first.click()
-        page.get_by_label("Name").fill("Retail Product Reference")
+        page.get_by_label("Name", exact=True).fill("Retail Product Reference")
         with page.expect_response(lambda r: r.url.endswith(f"/v1/competitors/{competitor_id}") and r.request.method == "PATCH") as event:
             page.get_by_role("button", name="Save competitor", exact=True).click()
         assert event.value.status == 200, event.value.text()
@@ -328,8 +328,8 @@ def main() -> None:
         page.get_by_role("link", name="Sources", exact=True).click()
         page.get_by_role("button", name="Add source", exact=True).click()
         choose(page, "Competitor", "Retail Product Reference")
-        page.get_by_label("Source name").fill(SOURCE)
-        page.get_by_label("Base URL").fill(PRICE_HIGH_URL)
+        page.get_by_label("Source name", exact=True).fill(SOURCE)
+        page.get_by_label("Base URL", exact=True).fill(PRICE_HIGH_URL)
         choose(page, "Source type", "OFFICIAL_STORE")
         choose(page, "Collection method", "HTTP_FAST")
         shot(page, "11-source-form.png")
@@ -340,12 +340,12 @@ def main() -> None:
         page.get_by_text(SOURCE, exact=True).wait_for()
         shot(page, "12-source-created.png")
         page.get_by_title("Configuration", exact=True).click()
-        page.get_by_label("Rate / minute").fill("60")
-        page.get_by_label("Delay seconds").fill("0.1")
-        page.get_by_label("Timeout seconds").fill("25")
-        page.get_by_label("Max retries").fill("1")
-        page.get_by_label("Custom headers (JSON)").fill('{"Accept-Language":"en-US,en;q=0.9"}')
-        page.get_by_label("Extraction selectors (JSON)").fill("{}")
+        page.get_by_label("Rate / minute", exact=True).fill("60")
+        page.get_by_label("Delay seconds", exact=True).fill("0.1")
+        page.get_by_label("Timeout seconds", exact=True).fill("25")
+        page.get_by_label("Max retries", exact=True).fill("1")
+        page.get_by_label("Custom headers (JSON)", exact=True).fill('{"Accept-Language":"en-US,en;q=0.9"}')
+        page.get_by_label("Extraction selectors (JSON)", exact=True).fill("{}")
         shot(page, "13-source-configuration-form.png")
         with page.expect_response(lambda r: r.url.endswith(f"/v1/sources/{source_id}/configuration") and r.request.method == "PATCH") as event:
             page.get_by_role("button", name="Save configuration", exact=True).click()
@@ -353,7 +353,7 @@ def main() -> None:
         source_config = page.request.get(API_URL + f"/v1/sources/{source_id}", headers={"Authorization": f"Bearer {token(page)}"})
         assert source_config.status == 200 and source_config.json()["configuration"]["max_retries"] == 1
         page.get_by_title("Edit source", exact=True).click()
-        page.get_by_label("Source name").fill(SOURCE)
+        page.get_by_label("Source name", exact=True).fill(SOURCE)
         with page.expect_response(lambda r: r.url.endswith(f"/v1/sources/{source_id}") and r.request.method == "PATCH") as event:
             page.get_by_role("button", name="Save changes", exact=True).click()
         assert event.value.status == 200, event.value.text()
@@ -362,16 +362,16 @@ def main() -> None:
         # Catalog CRUD, details/history, monitoring, dynamic fields, bulk import/export/archive.
         page.get_by_role("link", name="Offerings", exact=True).click()
         page.get_by_role("button", name="Add offering", exact=True).click()
-        page.get_by_label("Name").fill(OFFERING)
+        page.get_by_label("Name", exact=True).fill(OFFERING)
         choose(page, "Offering type", "PRODUCT")
-        page.get_by_label("SKU").fill("WH1000XM5-BLK")
-        page.get_by_label("Current price").fill("449.99")
-        page.get_by_label("Currency").fill("USD")
-        page.get_by_label("Market").fill("US")
-        page.get_by_label("Category").fill("Electronics > Audio")
-        page.get_by_label("Product URL").fill("https://www.sony.com/electronics/headband-headphones/wh-1000xm5")
-        page.get_by_label("Description").fill("Wireless over-ear headphones with active noise cancellation and multipoint Bluetooth.")
-        page.get_by_label("Dynamic attributes (JSON)").fill('{"brand":"Sony","color":"Black","battery_life_hours":30,"noise_cancellation":true}')
+        page.get_by_label("SKU", exact=True).fill("WH1000XM5-BLK")
+        page.get_by_label("Current price", exact=True).fill("449.99")
+        page.get_by_label("Currency", exact=True).fill("USD")
+        page.get_by_label("Market", exact=True).fill("US")
+        page.get_by_label("Category", exact=True).fill("Electronics > Audio")
+        page.get_by_label("Product URL", exact=True).fill("https://www.sony.com/electronics/headband-headphones/wh-1000xm5")
+        page.get_by_label("Description", exact=True).fill("Wireless over-ear headphones with active noise cancellation and multipoint Bluetooth.")
+        page.get_by_label("Dynamic attributes (JSON)", exact=True).fill('{"brand":"Sony","color":"Black","battery_life_hours":30,"noise_cancellation":true}')
         shot(page, "15-offering-form.png")
         with page.expect_response(lambda r: r.url.endswith("/v1/offerings") and r.request.method == "POST") as event:
             page.get_by_role("button", name="Create offering", exact=True).click()
@@ -386,7 +386,7 @@ def main() -> None:
         page.keyboard.press("Escape")
         row = page.locator("tbody tr").filter(has_text=OFFERING).first
         row.get_by_title("Edit", exact=True).click()
-        page.get_by_label("Current price").fill("429.99")
+        page.get_by_label("Current price", exact=True).fill("429.99")
         with page.expect_response(lambda r: r.url.endswith(f"/v1/offerings/{offering_id}") and r.request.method == "PATCH") as event:
             page.get_by_role("button", name="Save changes", exact=True).click()
         assert event.value.status == 200, event.value.text()
@@ -401,11 +401,11 @@ def main() -> None:
         page.get_by_text("Dynamic field definitions", exact=True).wait_for()
         shot(page, "19-dynamic-fields.png")
         page.get_by_role("button", name="Add field", exact=True).click()
-        page.get_by_label("Machine name").fill("review_cycle_months")
-        page.get_by_label("Display name").fill("Review Cycle")
-        page.get_by_label("Data type").fill("NUMBER")
-        page.get_by_label("Unit").fill("months")
-        page.get_by_label("Category").fill("Commercial")
+        page.get_by_label("Machine name", exact=True).fill("review_cycle_months")
+        page.get_by_label("Display name", exact=True).fill("Review Cycle")
+        page.get_by_label("Data type", exact=True).fill("NUMBER")
+        page.get_by_label("Unit", exact=True).fill("months")
+        page.get_by_label("Category", exact=True).fill("Commercial")
         shot(page, "20-dynamic-field-form.png")
         with page.expect_response(lambda r: r.url.endswith("/v1/offerings/fields") and r.request.method == "POST") as event:
             page.get_by_role("button", name="Create field", exact=True).click()
@@ -424,7 +424,7 @@ def main() -> None:
             {"name":"Sony ULT WEAR Wireless Headphones","offering_type":"PRODUCT","sku":"ULTWEAR-BLK","current_price":"199.99","currency":"USD","market":"US","url":"https://www.sony.com/electronics/headband-headphones/ult-wear","category":"Electronics > Audio","attributes":{"brand":"Sony","color":"Black"}},
             {"name":"Sony LinkBuds S","offering_type":"PRODUCT","sku":"LINKBUDS-S-BLK","current_price":"199.99","currency":"USD","market":"US","url":"https://www.sony.com/electronics/truly-wireless/linkbuds-s","category":"Electronics > Audio","attributes":{"brand":"Sony","fit":"In-ear"}},
         ]
-        page.get_by_label("Offering JSON").fill(json.dumps(bulk_items))
+        page.get_by_label("Offering JSON", exact=True).fill(json.dumps(bulk_items))
         shot(page, "22-bulk-import-form.png")
         with page.expect_response(lambda r: r.url.endswith("/v1/offerings/bulk") and r.request.method == "POST") as event:
             page.get_by_role("button", name="Import offerings", exact=True).click()
@@ -453,9 +453,9 @@ def main() -> None:
         page.get_by_role("button", name="Add match", exact=True).click()
         choose(page, "Offering", OFFERING)
         choose(page, "Source", SOURCE)
-        page.get_by_label("Competitor target URL").fill(PRICE_HIGH_URL)
+        page.get_by_label("Competitor target URL", exact=True).fill(PRICE_HIGH_URL)
         choose(page, "Status", "APPROVED")
-        page.get_by_label("Confidence (0–1)").fill("0.98")
+        page.get_by_label("Confidence (0–1)", exact=True).fill("0.98")
         shot(page, "25-match-form.png")
         with page.expect_response(lambda r: r.url.endswith("/v1/offering-matches") and r.request.method == "POST") as event:
             page.get_by_role("button", name="Create match", exact=True).click()
@@ -478,11 +478,11 @@ def main() -> None:
         # An actual alert rule is triggered by the next lower HTTP-collected price.
         page.get_by_role("link", name="Alerts", exact=True).click()
         page.get_by_role("button", name="New rule", exact=True).click()
-        page.get_by_label("Rule name").fill("Sony retail price drop")
+        page.get_by_label("Rule name", exact=True).fill("Sony retail price drop")
         choose(page, "Alert type", "PERCENTAGE_DROP")
         choose(page, "Offering scope", OFFERING)
-        page.get_by_label("Threshold").fill("10")
-        page.get_by_label("Cooldown (minutes)").fill("60")
+        page.get_by_label("Threshold", exact=True).fill("10")
+        page.get_by_label("Cooldown (minutes)", exact=True).fill("60")
         shot(page, "28-alert-rule-form.png")
         with page.expect_response(lambda r: r.url.endswith("/v1/alerts/rules") and r.request.method == "POST") as event:
             page.get_by_role("button", name="Create rule", exact=True).click()
@@ -493,7 +493,7 @@ def main() -> None:
         page.get_by_role("link", name="Matches", exact=True).click()
         row = page.locator("tbody tr").filter(has_text=OFFERING).first
         row.get_by_title("Edit", exact=True).click()
-        page.get_by_label("Competitor target URL").fill(PRICE_LOW_URL)
+        page.get_by_label("Competitor target URL", exact=True).fill(PRICE_LOW_URL)
         with page.expect_response(lambda r: r.url.endswith(f"/v1/offering-matches/{match_id}") and r.request.method == "PATCH") as event:
             page.get_by_role("button", name="Save changes", exact=True).click()
         assert event.value.status == 200, event.value.text()
@@ -536,13 +536,13 @@ def main() -> None:
 
         # SSRF boundary and structured-data discovery/upsert.
         page.get_by_role("link", name="Discovery", exact=True).click()
-        page.get_by_label("Website URL").fill("http://127.0.0.1:8000/v1/health")
-        page.get_by_label("Max pages").fill("1")
+        page.get_by_label("Website URL", exact=True).fill("http://127.0.0.1:8000/v1/health")
+        page.get_by_label("Max pages", exact=True).fill("1")
         with page.expect_response(lambda r: r.url.endswith("/v1/discovery/run") and r.request.method == "POST") as event:
             page.get_by_role("button", name="Run discovery", exact=True).click()
         assert event.value.status == 422, event.value.text()
         shot(page, "34-private-discovery-target-blocked.png")
-        page.get_by_label("Website URL").fill(DISCOVERY_URL)
+        page.get_by_label("Website URL", exact=True).fill(DISCOVERY_URL)
         choose(page, "Default type", "PRODUCT")
         with page.expect_response(lambda r: r.url.endswith("/v1/discovery/run") and r.request.method == "POST") as event:
             page.get_by_role("button", name="Run discovery", exact=True).click()
@@ -568,21 +568,21 @@ def main() -> None:
 
         # Workspace settings persist independently and password rotation invalidates old credentials.
         page.locator("a.sidebar-status").click()
-        page.get_by_label("Company name").wait_for()
+        page.get_by_label("Company name", exact=True).wait_for()
         shot(page, "37-workspace-settings.png")
-        page.get_by_label("Company name").fill("Northstar Analytics")
-        page.get_by_label("Country").fill("US")
-        page.get_by_label("Default currency").fill("USD")
-        page.get_by_label("Market").fill("US")
-        page.get_by_label("Industry").fill("Consumer Electronics")
-        page.get_by_label("Timezone").fill("America/New_York")
+        page.get_by_label("Company name", exact=True).fill("Northstar Analytics")
+        page.get_by_label("Country", exact=True).fill("US")
+        page.get_by_label("Default currency", exact=True).fill("USD")
+        page.get_by_label("Market", exact=True).fill("US")
+        page.get_by_label("Industry", exact=True).fill("Consumer Electronics")
+        page.get_by_label("Timezone", exact=True).fill("America/New_York")
         with page.expect_response(lambda r: r.url.endswith("/v1/auth/profile") and r.request.method == "PATCH") as event:
             page.get_by_role("button", name="Save profile", exact=True).click()
         assert event.value.status == 200, event.value.text()
         assert api_get(page, "/v1/auth/profile")["company_name"] == "Northstar Analytics"
         shot(page, "38-workspace-profile-saved.png")
-        page.get_by_label("Current password").fill(PASSWORD)
-        page.get_by_label("New password").fill(CHANGED_PASSWORD)
+        page.get_by_label("Current password", exact=True).fill(PASSWORD)
+        page.get_by_label("New password", exact=True).fill(CHANGED_PASSWORD)
         with page.expect_response(lambda r: r.url.endswith("/v1/auth/change-password") and r.request.method == "POST") as event:
             page.get_by_role("button", name="Update password", exact=True).click()
         assert event.value.status == 200, event.value.text()
@@ -595,7 +595,7 @@ def main() -> None:
         # Reset link is delivered, consumed once, then the new password signs in via UI.
         sign_out(page)
         page.get_by_role("link", name="Forgot password?", exact=True).click()
-        page.get_by_label("Work email").fill(EMAIL)
+        page.get_by_label("Work email", exact=True).fill(EMAIL)
         before_reset_mail = len(mailbox())
         with page.expect_response(lambda r: r.url.endswith("/v1/auth/forgot-password") and r.request.method == "POST") as event:
             page.get_by_role("button", name="Send reset link", exact=True).click()
@@ -605,9 +605,9 @@ def main() -> None:
         _, reset_body = wait_mail("Reset your Nexora password", EMAIL, before_reset_mail)
         reset_url = mail_link(reset_body, "reset-password")
         page.goto(reset_url, wait_until="networkidle")
-        page.get_by_label("New password").wait_for()
+        page.get_by_label("New password", exact=True).wait_for()
         shot(page, "41-reset-form.png")
-        page.get_by_label("New password").fill(RESET_PASSWORD)
+        page.get_by_label("New password", exact=True).fill(RESET_PASSWORD)
         with page.expect_response(lambda r: r.url.endswith("/v1/auth/reset-password") and r.request.method == "POST") as event:
             page.get_by_role("button", name="Update password", exact=True).click()
         assert event.value.status == 200, event.value.text()
