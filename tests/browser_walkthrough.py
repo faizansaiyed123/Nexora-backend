@@ -622,8 +622,21 @@ def main():
         page.get_by_role("button",name="Dismiss import results",exact=True).click()
         page.get_by_text("Page 1 of 2",exact=True).wait_for()
         assert page.locator("tbody tr").count()==50,page.locator("tbody tr").count()
-        page.get_by_role("button",name="Next",exact=True).click()
+        with page.expect_response(
+            lambda response: "/v1/offerings?" in response.url
+            and "page=2" in response.url
+            and response.request.method == "GET"
+        ) as second_page_event:
+            page.get_by_role("button",name="Next",exact=True).click()
+        second_page_response=second_page_event.value
+        assert second_page_response.status==200,second_page_response.text()
+        second_page_payload=second_page_response.json()
+        assert len(second_page_payload["items"])==4,second_page_payload
         page.get_by_text("Page 2 of 2",exact=True).wait_for()
+        page.wait_for_function(
+            "() => document.querySelectorAll('tbody tr').length === 4",
+            timeout=10000,
+        )
         assert page.locator("tbody tr").count()==4,page.locator("tbody tr").count()
         shot(page,"23c-catalog-pagination.png")
         page.get_by_role("button",name="Previous",exact=True).click()
