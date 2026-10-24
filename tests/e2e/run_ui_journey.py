@@ -9,6 +9,8 @@ import asyncio
 import json
 import os
 import re
+import subprocess
+import sys
 import time
 from email import message_from_string
 from pathlib import Path
@@ -520,7 +522,20 @@ def main() -> None:
 
         # The delivery worker sends the real alert outbox item to an isolated STARTTLS inbox.
         before_alert_email = len(mailbox())
-        worker_response = dispatch_pending_notifications.run()
+        worker_process = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import json; from backend.workers.tasks import dispatch_pending_notifications; "
+                "print(json.dumps(dispatch_pending_notifications.run()))",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+        worker_lines = [line.strip() for line in worker_process.stdout.splitlines() if line.strip()]
+        worker_response = json.loads(worker_lines[-1])
         assert int(worker_response.get("sent", 0)) >= 1, worker_response
         _, alert_body = wait_mail("Nexora Competitive Alert: Competitor price dropped", EMAIL, before_alert_email)
         assert "Nexora detected a competitive intelligence event" in alert_body
