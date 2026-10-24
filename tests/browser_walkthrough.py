@@ -130,6 +130,51 @@ async def get_outbox_statuses(client_id):
             NotificationOutboxModel.client_id==client_id,NotificationOutboxModel.channel=="email"))
         return list(result.scalars().all())
 
+def get_outbox_statuses_sync(client_id):
+    code = """
+import asyncio, json, sys, uuid
+from sqlalchemy import select
+from backend.db.session import AsyncSessionLocal
+from backend.models.notification import NotificationOutboxModel
+async def main():
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(NotificationOutboxModel.status).where(
+            NotificationOutboxModel.client_id == uuid.UUID(sys.argv[1]),
+            NotificationOutboxModel.channel == "email"))
+        print(json.dumps(list(result.scalars().all())))
+asyncio.run(main())
+"""
+    result=subprocess.run([sys.executable,"-c",code,str(client_id)],capture_output=True,text=True,check=True,env=os.environ.copy())
+    lines=[line for line in result.stdout.splitlines() if line.strip().startswith("[")]
+    assert lines,result.stdout+" "+result.stderr
+    return json.loads(lines[-1])
+
+def create_role_user_sync(client_id, role, suffix):
+    code = """
+import asyncio, sys, uuid
+from backend.core.security import get_password_hash
+from backend.db.session import AsyncSessionLocal
+from backend.models.client import UserModel
+from backend.models.enums import RoleEnum
+async def main():
+    client_id = uuid.UUID(sys.argv[1])
+    role = RoleEnum(sys.argv[2])
+    suffix = sys.argv[3]
+    email = f"{role.value.lower()}-{suffix}@northstar.example.com"
+    async with AsyncSessionLocal() as session:
+        user = await session.scalar(__import__("sqlalchemy").select(UserModel).where(UserModel.email == email))
+        if not user:
+            session.add(UserModel(client_id=client_id,email=email,full_name="Northstar "+role.value.title(),
+                hashed_password=get_password_hash("Nexora-Role!2026"),role=role,is_active=True,email_verified=True))
+            await session.commit()
+    print(email)
+asyncio.run(main())
+"""
+    result=subprocess.run([sys.executable,"-c",code,str(client_id),role.value,suffix],capture_output=True,text=True,check=True,env=os.environ.copy())
+    lines=[line.strip() for line in result.stdout.splitlines() if line.strip()]
+    assert lines,result.stdout+" "+result.stderr
+    return lines[-1]
+
 def dispatch_email_worker():
     code="import json; from backend.workers.tasks import dispatch_pending_notifications; print(json.dumps(dispatch_pending_notifications.run()))"
     result=subprocess.run([sys.executable,"-c",code],capture_output=True,text=True,check=True,env=os.environ.copy())
@@ -400,7 +445,7 @@ def main():
         assert int(delivery.get("sent",0))>=1,delivery
         mail_body=wait_email("Nexora Competitive Alert: Competitor price dropped",EMAIL,mail_start)
         assert "Nexora detected a competitive intelligence event" in mail_body
-        assert "SENT" in run_async(get_outbox_statuses(client_id))
+        assert "SENT" in get_outbox_statuses_sync(client_id)
 
         # Collection execution history and saved job details.
         page.get_by_role("link",name="Jobs",exact=True).click()
@@ -479,8 +524,8 @@ def main():
 
         # Role views enforce read-only access on both the interface and server.
         suffix=uuid.uuid4().hex[:8]
-        viewer_email=run_async(make_role_user(client_id,RoleEnum.VIEWER,suffix))
-        analyst_email=run_async(make_role_user(client_id,RoleEnum.ANALYST,suffix))
+        viewer_email=create_role_user_sync(client_id,RoleEnum.VIEWER,suffix)
+        analyst_email=create_role_user_sync(client_id,RoleEnum.ANALYST,suffix)
         logout(page)
         login(page,analyst_email,ROLE_PASSWORD)
         page.get_by_role("link",name="Competitors",exact=True).click()
@@ -530,7 +575,6 @@ def main():
         print(f"VISITOR JOURNEY COMPLETE: {len(expected_names)} screenshots captured; UI, API, PostgreSQL and mail flows completed.",flush=True)
         context.close()
         browser.close()
-    run_async(AsyncSessionLocal.kw["bind"].dispose()) if False else None
     ASYNC_LOOP.close()
 
 if __name__=="__main__":
