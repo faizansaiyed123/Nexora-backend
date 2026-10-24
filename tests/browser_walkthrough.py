@@ -654,7 +654,19 @@ def main():
         shot(page,"23d-catalog-type-filter.png")
         page.get_by_role("button",name="PLAN",exact=True).click()
         page.get_by_role("option",name="All types",exact=True).last.click()
-        page.get_by_text(OFFERING,exact=True).wait_for()
+        with page.expect_response(
+            lambda response: "/v1/offerings?" in response.url
+            and "page=1" in response.url
+            and "q=" in response.url
+            and "WH-1000XM5" in response.url
+            and response.request.method == "GET"
+        ) as offering_search_event:
+            page.get_by_placeholder("Search name, SKU, category…").fill(OFFERING)
+        offering_search_response=offering_search_event.value
+        assert offering_search_response.status==200,offering_search_response.text()
+        assert any(item["id"]==offering_id for item in offering_search_response.json()["items"]),offering_search_response.json()
+        page.locator("tbody tr").filter(has_text=OFFERING).wait_for()
+        assert page.locator("tbody tr").count()==1,page.locator("tbody tr").count()
 
         # A matched competitor URL creates a real price observation and snapshot.
         page.get_by_role("link",name="Matches",exact=True).click()
