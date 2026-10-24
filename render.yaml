@@ -53,5 +53,5 @@ services:
     region: singapore
     plan: free
     ipAllowList: []
-    maxmemoryPolicy: allkeys-lru
+    maxmemoryPolicy: noeviction
     persistenceMode: off
