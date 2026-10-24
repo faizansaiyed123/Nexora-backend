@@ -921,6 +921,8 @@ def main():
         analyst_write=page.request.post(API+"/v1/competitors",headers={"Authorization":"Bearer "+analyst_token},data=json.dumps({"name":"Not Allowed","domain":"blocked-"+suffix+".example"}))
         assert analyst_write.status==403,analyst_write.text()
         page.get_by_role("link",name="Discovery",exact=True).click()
+        page.get_by_role("heading",name="Website discovery",exact=True).wait_for(timeout=15000)
+        page.get_by_role("button",name="Run discovery",exact=True).wait_for(state="visible",timeout=10000)
         assert page.get_by_role("button",name="Run discovery",exact=True).is_visible()
         shot(page,"43-analyst-workspace.png")
         logout(page)
