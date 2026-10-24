@@ -749,7 +749,7 @@ def main() -> None:
             "34-private-discovery-target-blocked.png","35-discovery-created.png","36-discovery-upsert.png",
             "37-workspace-settings.png","38-workspace-profile-saved.png","39-password-changed.png",
             "40-reset-requested.png","41-reset-form.png","42-reset-completed.png","43-dashboard-after-reset.png",
-            "44-analyst-workspace.png","45-viewer-read-only.png","46-mobile-homepage.png",
+            "44-analyst-workspace.png","45-viewer-read-only.png","46-mobile-dashboard.png","47-mobile-homepage.png",
         ]
         missing = [name for name in expected if not (SCREENSHOTS / name).is_file()]
         assert not missing, f"Screenshots missing: {missing}"
