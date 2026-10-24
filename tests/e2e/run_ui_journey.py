@@ -265,6 +265,12 @@ async def verify_postgres(
 
 def main() -> None:
     SCREENSHOTS.mkdir(parents=True, exist_ok=True)
+    # Rebuild this journey's evidence from a clean output directory. A prior
+    # failed run can leave extra PNGs behind and make the screenshot manifest
+    # look complete when it no longer corresponds to the current test run.
+    for stale_screenshot in SCREENSHOTS.glob("*.png"):
+        stale_screenshot.unlink()
+    (SCREENSHOTS / "postgres-evidence.json").unlink(missing_ok=True)
     MAILBOX.parent.mkdir(parents=True, exist_ok=True)
     if MAILBOX.exists():
         MAILBOX.unlink()
