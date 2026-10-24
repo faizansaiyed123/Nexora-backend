@@ -48,6 +48,10 @@ jobs:
           --health-retries 20
     steps:
       - uses: actions/checkout@v4
+      - name: Validate local Compose and Render configuration syntax
+        run: |
+          docker compose config --quiet
+          ruby -e 'require "yaml"; YAML.load_file("render.yaml")'
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
