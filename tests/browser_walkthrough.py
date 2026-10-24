@@ -566,25 +566,40 @@ def main():
         assert viewer_write.status==403,viewer_write.text()
         shot(page,"44-viewer-read-only-workspace.png")
 
+        # Check the authenticated workspace and the logged-out public entry separately.
+        mobile_dashboard=context.new_page()
+        mobile_dashboard.set_viewport_size({"width":390,"height":844})
+        mobile_dashboard.goto(FRONTEND+"/",wait_until="networkidle")
+        dashboard_dimensions=mobile_dashboard.evaluate("() => ({viewport:document.documentElement.clientWidth,content:document.documentElement.scrollWidth})")
+        dashboard_overflow=mobile_dashboard.evaluate("""() => Array.from(document.querySelectorAll("body *")).map(element => {
+          const rect=element.getBoundingClientRect(); const style=getComputedStyle(element);
+          return {tag:element.tagName.toLowerCase(),id:element.id||"",
+            className:typeof element.className==="string"?element.className.slice(0,100):"",
+            text:(element.innerText||"").replace(/\\s+/g," ").slice(0,60),
+            left:Math.round(rect.left),right:Math.round(rect.right),width:Math.round(rect.width),
+            position:style.position,overflowX:style.overflowX};
+        }).filter(item=>item.width>0&&(item.right>innerWidth+1||item.left< -1))
+          .sort((a,b)=>b.right-a.right).slice(0,30)""")
+        print("MOBILE_DASHBOARD_DIAGNOSTICS "+json.dumps({"dimensions":dashboard_dimensions,"elements":dashboard_overflow}),flush=True)
+        assert dashboard_dimensions["content"]<=dashboard_dimensions["viewport"],{"dimensions":dashboard_dimensions,"overflow":dashboard_overflow}
+        shot(mobile_dashboard,"45-mobile-dashboard.png")
+
         mobile_context=browser.new_context(viewport={"width":390,"height":844})
         mobile=mobile_context.new_page()
         mobile.goto(FRONTEND+"/welcome",wait_until="networkidle")
-        dimensions=mobile.evaluate("() => ({viewport:document.documentElement.clientWidth,content:document.documentElement.scrollWidth})")
-        overflow_diagnostics=mobile.evaluate("""() => Array.from(document.querySelectorAll("body *")).map(element => {
-          const rect=element.getBoundingClientRect();
-          const style=getComputedStyle(element);
-          return {
-            tag:element.tagName.toLowerCase(), id:element.id||"",
+        home_dimensions=mobile.evaluate("() => ({viewport:document.documentElement.clientWidth,content:document.documentElement.scrollWidth})")
+        home_overflow=mobile.evaluate("""() => Array.from(document.querySelectorAll("body *")).map(element => {
+          const rect=element.getBoundingClientRect(); const style=getComputedStyle(element);
+          return {tag:element.tagName.toLowerCase(),id:element.id||"",
             className:typeof element.className==="string"?element.className.slice(0,100):"",
             text:(element.innerText||"").replace(/\\s+/g," ").slice(0,60),
-            left:Math.round(rect.left), right:Math.round(rect.right), width:Math.round(rect.width),
-            position:style.position, overflowX:style.overflowX
-          };
-        }).filter(item => item.width>0 && (item.right>innerWidth+1 || item.left< -1))
+            left:Math.round(rect.left),right:Math.round(rect.right),width:Math.round(rect.width),
+            position:style.position,overflowX:style.overflowX};
+        }).filter(item=>item.width>0&&(item.right>innerWidth+1||item.left< -1))
           .sort((a,b)=>b.right-a.right).slice(0,30)""")
-        print("MOBILE_OVERFLOW_DIAGNOSTICS "+json.dumps({"dimensions":dimensions,"elements":overflow_diagnostics}),flush=True)
-        assert dimensions["content"]<=dimensions["viewport"],{"dimensions":dimensions,"overflow":overflow_diagnostics}
-        shot(mobile,"45-mobile-homepage.png")
+        print("MOBILE_HOME_DIAGNOSTICS "+json.dumps({"dimensions":home_dimensions,"elements":home_overflow}),flush=True)
+        assert home_dimensions["content"]<=home_dimensions["viewport"],{"dimensions":home_dimensions,"overflow":home_overflow}
+        shot(mobile,"46-mobile-homepage.png")
         mobile_context.close()
         assert not BROWSER_ERRORS,"Frontend JavaScript errors: "+" | ".join(BROWSER_ERRORS)
         expected_names=[f"{i:02d}-"+name for i,name in [
@@ -599,7 +614,7 @@ def main():
             (32,"collection-job-details.png"),(33,"private-target-blocked.png"),(34,"discovery-product-created.png"),(35,"discovery-update-history.png"),
             (36,"workspace-settings.png"),(37,"workspace-profile-saved.png"),(38,"password-changed.png"),(39,"password-reset-requested.png"),
             (40,"password-reset-form.png"),(41,"password-reset-complete.png"),(42,"dashboard-after-reset.png"),(43,"analyst-workspace.png"),
-            (44,"viewer-read-only-workspace.png"),(45,"mobile-homepage.png")
+            (44,"viewer-read-only-workspace.png"),(45,"mobile-dashboard.png"),(46,"mobile-homepage.png")
         ]]
         missing=[name for name in expected_names if not (SHOTS/name).is_file()]
         assert not missing,"Missing visitor journey screens: "+str(missing)

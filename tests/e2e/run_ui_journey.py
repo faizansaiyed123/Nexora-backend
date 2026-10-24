@@ -692,30 +692,43 @@ def main() -> None:
         assert denied.status == 403, denied.text()
         shot(page, "45-viewer-read-only.png")
 
-        # Responsive public page and final direct PostgreSQL evidence.
+        # Test the populated authenticated dashboard at mobile width, then a fresh public homepage.
+        mobile_dashboard = context.new_page()
+        mobile_dashboard.set_viewport_size({"width":390,"height":844})
+        mobile_dashboard.goto(FRONTEND_URL + "/", wait_until="networkidle")
+        dashboard_dimensions = mobile_dashboard.evaluate("() => ({viewport:document.documentElement.clientWidth,content:document.documentElement.scrollWidth})")
+        dashboard_overflow = mobile_dashboard.evaluate("""() => Array.from(document.querySelectorAll("body *")).map(element => {
+          const rect = element.getBoundingClientRect();
+          const style = getComputedStyle(element);
+          return {tag:element.tagName.toLowerCase(), id:element.id||"",
+            className:typeof element.className==="string"?element.className.slice(0,100):"",
+            text:(element.innerText||"").replace(/\\s+/g," ").slice(0,60),
+            left:Math.round(rect.left),right:Math.round(rect.right),width:Math.round(rect.width),
+            position:style.position,overflowX:style.overflowX};
+        }).filter(item => item.width>0 && (item.right>innerWidth+1 || item.left< -1))
+          .sort((a,b)=>b.right-a.right).slice(0,30)""")
+        print("MOBILE_DASHBOARD_DIAGNOSTICS "+json.dumps({"dimensions":dashboard_dimensions,"elements":dashboard_overflow}),flush=True)
+        assert dashboard_dimensions["content"] <= dashboard_dimensions["viewport"], {"dimensions":dashboard_dimensions,"overflow":dashboard_overflow}
+        shot(mobile_dashboard, "46-mobile-dashboard.png")
+
         mobile_context = browser.new_context(viewport={"width":390,"height":844})
         mobile = mobile_context.new_page()
         mobile.goto(FRONTEND_URL + "/welcome", wait_until="networkidle")
-        dimensions = mobile.evaluate("() => ({viewport:document.documentElement.clientWidth,content:document.documentElement.scrollWidth})")
-        overflow_diagnostics = mobile.evaluate("""() => Array.from(document.querySelectorAll("body *")).map(element => {
+        home_dimensions = mobile.evaluate("() => ({viewport:document.documentElement.clientWidth,content:document.documentElement.scrollWidth})")
+        home_overflow = mobile.evaluate("""() => Array.from(document.querySelectorAll("body *")).map(element => {
           const rect = element.getBoundingClientRect();
           const style = getComputedStyle(element);
-          return {
-            tag: element.tagName.toLowerCase(),
-            id: element.id || "",
-            className: typeof element.className === "string" ? element.className.slice(0, 100) : "",
-            text: (element.innerText || "").replace(/\\s+/g, " ").slice(0, 60),
-            left: Math.round(rect.left),
-            right: Math.round(rect.right),
-            width: Math.round(rect.width),
-            position: style.position,
-            overflowX: style.overflowX
-          };
-        }).filter(item => item.width > 0 && (item.right > innerWidth + 1 || item.left < -1))
-          .sort((a, b) => b.right - a.right).slice(0, 30)""")
-        print("MOBILE_OVERFLOW_DIAGNOSTICS " + json.dumps({"dimensions": dimensions, "elements": overflow_diagnostics}), flush=True)
-        assert dimensions["content"] <= dimensions["viewport"], {"dimensions": dimensions, "overflow": overflow_diagnostics}
-        shot(mobile, "46-mobile-homepage.png")
+          return {tag:element.tagName.toLowerCase(), id:element.id||"",
+            className:typeof element.className==="string"?element.className.slice(0,100):"",
+            text:(element.innerText||"").replace(/\\s+/g," ").slice(0,60),
+            left:Math.round(rect.left),right:Math.round(rect.right),width:Math.round(rect.width),
+            position:style.position,overflowX:style.overflowX};
+        }).filter(item => item.width>0 && (item.right>innerWidth+1 || item.left< -1))
+          .sort((a,b)=>b.right-a.right).slice(0,30)""")
+        print("MOBILE_HOME_DIAGNOSTICS "+json.dumps({"dimensions":home_dimensions,"elements":home_overflow}),flush=True)
+        assert home_dimensions["content"] <= home_dimensions["viewport"], {"dimensions":home_dimensions,"overflow":home_overflow}
+        shot(mobile, "47-mobile-homepage.png")
+        mobile_context.close()
 
         persisted = run_async(verify_postgres(
             client_id, competitor_id, source_id, offering_id, match_id, rule_id,
