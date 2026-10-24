@@ -665,12 +665,13 @@ def main():
             (16,"offering-details.png"),(17,"monitoring-controls.png"),(18,"dynamic-fields.png"),(19,"dynamic-field-form.png"),
             (20,"dynamic-field-created.png"),(21,"bulk-import-form.png"),(22,"bulk-import-results.png"),(23,"catalog-import-export-archive.png"),
             (24,"offering-match-form.png"),(25,"offering-match-created.png"),(26,"first-price-observation.png"),(27,"dashboard-with-market-data.png"),
-            (28,"alert-rule-form.png"),(29,"alert-rule-created.png"),(29,"circuit-breaker-rule-form.png"),(29,"source-circuit-open.png"),(29,"circuit-breaker-alert.png"),(30,"alert-generated-and-read.png"),(31,"collection-job-history.png"),
+            (28,"alert-rule-form.png"),(29,"alert-rule-created.png"),(30,"alert-generated-and-read.png"),(31,"collection-job-history.png"),
             (32,"collection-job-details.png"),(33,"private-target-blocked.png"),(34,"discovery-product-created.png"),(35,"discovery-update-history.png"),
             (36,"workspace-settings.png"),(37,"workspace-profile-saved.png"),(38,"password-changed.png"),(39,"password-reset-requested.png"),
             (40,"password-reset-form.png"),(41,"password-reset-complete.png"),(42,"dashboard-after-reset.png"),(43,"analyst-workspace.png"),
             (44,"viewer-read-only-workspace.png"),(45,"mobile-dashboard.png"),(46,"mobile-homepage.png"),
         ]]
+        expected_names += ["29b-circuit-breaker-rule-form.png","29c-source-circuit-open.png","29d-circuit-breaker-alert.png"]
         missing=[name for name in expected_names if not (SHOTS/name).is_file()]
         assert not missing,"Missing visitor journey screens: "+str(missing)
         print(f"VISITOR JOURNEY COMPLETE: {len(expected_names)} screenshots captured; UI, API, PostgreSQL and mail flows completed.",flush=True)
