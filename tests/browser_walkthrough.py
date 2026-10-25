@@ -28,6 +28,7 @@ SOURCE="Retail Product Listing"
 OFFERING="Sony WH-1000XM5 Wireless Headphones"
 DISCOVERED="Sony WF-1000XM5 Truly Wireless Noise Canceling Earbuds"
 HIGH_URL="https://cdn.jsdelivr.net/gh/faizansaiyed123/Nexora-backend@fdb1485792351285bbc143d7bd460a6eacbf7f56/tests/fixtures/retail-price-high.html"
+JS_URL="https://cdn.jsdelivr.net/gh/faizansaiyed123/Nexora-backend@3061b6a394ecd07da3dee250bfc3dddd4e783950/tests/fixtures/retail-price-js.html"
 LOW_URL="https://cdn.jsdelivr.net/gh/faizansaiyed123/Nexora-backend@fdb1485792351285bbc143d7bd460a6eacbf7f56/tests/fixtures/retail-price-low.html"
 DISCOVERY_URL="https://cdn.jsdelivr.net/gh/faizansaiyed123/Nexora-backend@fdb1485792351285bbc143d7bd460a6eacbf7f56/tests/fixtures/retail-discovery-product.html"
 BROWSER_ERRORS=[]
@@ -402,7 +403,7 @@ def main():
         page.get_by_label("Source name").fill(SOURCE)
         page.get_by_label("Base URL").fill(HIGH_URL)
         choose(page,"Source type","OFFICIAL_STORE")
-        choose(page,"Collection method","HTTP_FAST")
+        choose(page,"Collection method","PLAYWRIGHT_BROWSER")
         shot(page,"10-source-form.png")
         source=submit(page,"Create source","/v1/sources").json()
         source_id=source["id"]
@@ -426,16 +427,19 @@ def main():
         page.get_by_title("Configuration",exact=True).click()
         assert page.get_by_label("Require JavaScript rendering").is_checked()
         shot(page,"13b-source-js-rendering-enabled.png")
-        page.get_by_label("Require JavaScript rendering").uncheck()
-        config=submit(page,"Save configuration",f"/v1/sources/{source_id}/configuration","PATCH",200).json()
-        assert config["requires_javascript"] is False,config
-
+        # Keep JavaScript rendering enabled for the real collection scenario below.
         page.get_by_title("Edit source",exact=True).click()
         page.get_by_label("Source name").fill(SOURCE+" Structured")
         source_edit=submit(page,"Save changes",f"/v1/sources/{source_id}","PATCH",200).json()
         assert source_edit["name"]==SOURCE+" Structured"
         source_rows=get_api(page,"/v1/sources")
-        assert any(s["id"]==source_id and s["configuration"]["max_retries"]==1 for s in source_rows)
+        assert any(
+            s["id"]==source_id
+            and s["configuration"]["max_retries"]==1
+            and s["configuration"]["requires_javascript"] is True
+            and s["collection_method"]=="PLAYWRIGHT_BROWSER"
+            for s in source_rows
+        ),source_rows
         shot(page,"13-source-settings-saved.png")
 
         # Catalog CRUD, dynamic fields, bulk import/export and archive.
@@ -677,24 +681,24 @@ def main():
         page.get_by_role("button",name="Add match",exact=True).click()
         choose(page,"Offering",OFFERING)
         choose(page,"Source",SOURCE+" Structured")
-        page.get_by_label("Competitor target URL").fill(HIGH_URL)
+        page.get_by_label("Competitor target URL").fill(JS_URL)
         choose(page,"Status","APPROVED")
         page.get_by_label("Confidence (0–1)").fill("0.98")
         shot(page,"24-offering-match-form.png")
         match=submit(page,"Create match","/v1/offering-matches").json()
         match_id=match["id"]
-        page.get_by_text(HIGH_URL,exact=False).first.wait_for()
+        page.get_by_text(JS_URL,exact=False).first.wait_for()
         shot(page,"25-offering-match-created.png")
 
         # Confidence is a valid inclusive 0..1 score. Preserve the boundary value
         # through the real form, backend validation, and a fresh read of the saved row.
-        page.locator("tbody tr").filter(has_text=HIGH_URL).first.get_by_title("Edit",exact=True).click()
+        page.locator("tbody tr").filter(has_text=JS_URL).first.get_by_title("Edit",exact=True).click()
         page.get_by_label("Confidence (0–1)").fill("0")
         zero_confidence=submit(page,"Save changes",f"/v1/offering-matches/{match_id}","PATCH",200).json()
         assert float(zero_confidence["confidence_score"])==0.0,zero_confidence
         zero_confidence_readback=next(row for row in get_api(page,"/v1/offering-matches") if row["id"]==match_id)
         assert float(zero_confidence_readback["confidence_score"])==0.0,zero_confidence_readback
-        page.locator("tbody tr").filter(has_text=HIGH_URL).first.get_by_title("Edit",exact=True).click()
+        page.locator("tbody tr").filter(has_text=JS_URL).first.get_by_title("Edit",exact=True).click()
         page.get_by_label("Confidence (0–1)").fill("0.98")
         restored_confidence=submit(page,"Save changes",f"/v1/offering-matches/{match_id}","PATCH",200).json()
         assert float(restored_confidence["confidence_score"])==0.98,restored_confidence
