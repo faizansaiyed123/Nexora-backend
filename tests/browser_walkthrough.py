@@ -57,9 +57,17 @@ def run_async(coro):
     return outcome["value"]
 
 def shot(page: Page, name: str):
-    SHOTS.mkdir(parents=True,exist_ok=True)
-    page.screenshot(path=str(SHOTS/name),full_page=True,animations="disabled",caret="hide")
-    print("SCREENSHOT "+name,flush=True)
+    SHOTS.mkdir(parents=True, exist_ok=True)
+    # Let transient success feedback clear so it does not cover the saved record
+    # in the visitor gallery. Error feedback remains visible for rejection screens.
+    page.locator(".toast-success").wait_for(state="hidden", timeout=4500)
+    # Clicking a right-edge table action can horizontally scroll the table. Return
+    # every data table to its first column before capturing the complete page.
+    page.evaluate(
+        "() => document.querySelectorAll('.table-wrap').forEach((table) => { table.scrollLeft = 0; })"
+    )
+    page.screenshot(path=str(SHOTS / name), full_page=True, animations="disabled", caret="hide")
+    print("SCREENSHOT " + name, flush=True)
 
 def choose(page: Page, label: str, option: str):
     field=page.locator("label.field").filter(has_text=label).last
