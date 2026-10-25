@@ -27,9 +27,9 @@ COMPETITOR="Retail Product Reference"
 SOURCE="Retail Product Listing"
 OFFERING="Sony WH-1000XM5 Wireless Headphones"
 DISCOVERED="Sony WF-1000XM5 Truly Wireless Noise Canceling Earbuds"
-HIGH_URL="https://cdn.jsdelivr.net/gh/faizansaiyed123/Nexora-backend@main/tests/fixtures/retail-price-high.html"
-LOW_URL="https://cdn.jsdelivr.net/gh/faizansaiyed123/Nexora-backend@main/tests/fixtures/retail-price-low.html"
-DISCOVERY_URL="https://cdn.jsdelivr.net/gh/faizansaiyed123/Nexora-backend@main/tests/fixtures/retail-discovery-product.html"
+HIGH_URL="https://cdn.jsdelivr.net/gh/faizansaiyed123/Nexora-backend@fdb1485792351285bbc143d7bd460a6eacbf7f56/tests/fixtures/retail-price-high.html"
+LOW_URL="https://cdn.jsdelivr.net/gh/faizansaiyed123/Nexora-backend@fdb1485792351285bbc143d7bd460a6eacbf7f56/tests/fixtures/retail-price-low.html"
+DISCOVERY_URL="https://cdn.jsdelivr.net/gh/faizansaiyed123/Nexora-backend@fdb1485792351285bbc143d7bd460a6eacbf7f56/tests/fixtures/retail-discovery-product.html"
 BROWSER_ERRORS=[]
 def run_async(coro):
     """Run database coroutines on a dedicated loop outside Playwright's sync loop."""
@@ -683,6 +683,20 @@ def main():
         page.get_by_text(HIGH_URL,exact=False).first.wait_for()
         shot(page,"25-offering-match-created.png")
 
+        # Confidence is a valid inclusive 0..1 score. Preserve the boundary value
+        # through the real form, backend validation, and a fresh read of the saved row.
+        page.locator("tbody tr").filter(has_text=HIGH_URL).first.get_by_title("Edit",exact=True).click()
+        page.get_by_label("Confidence (0–1)").fill("0")
+        zero_confidence=submit(page,"Save changes",f"/v1/offering-matches/{match_id}","PATCH",200).json()
+        assert float(zero_confidence["confidence_score"])==0.0,zero_confidence
+        zero_confidence_readback=next(row for row in get_api(page,"/v1/offering-matches") if row["id"]==match_id)
+        assert float(zero_confidence_readback["confidence_score"])==0.0,zero_confidence_readback
+        page.locator("tbody tr").filter(has_text=HIGH_URL).first.get_by_title("Edit",exact=True).click()
+        page.get_by_label("Confidence (0–1)").fill("0.98")
+        restored_confidence=submit(page,"Save changes",f"/v1/offering-matches/{match_id}","PATCH",200).json()
+        assert float(restored_confidence["confidence_score"])==0.98,restored_confidence
+        assert float(next(row for row in get_api(page,"/v1/offering-matches") if row["id"]==match_id)["confidence_score"])==0.98
+
         # Exercise the Matches screen's delete action with an alternative URL,
         # then confirm the row is absent after a fresh API read. This temporary
         # record is removed before the primary match changes to the same URL.
@@ -786,7 +800,7 @@ def main():
         page.get_by_role("link",name="Matches",exact=True).click()
         match_row=page.locator("tbody tr").filter(has_text=OFFERING).first
         match_row.get_by_title("Edit",exact=True).click()
-        missing_url="https://cdn.jsdelivr.net/gh/faizansaiyed123/Nexora-backend@main/tests/fixtures/retail-price-missing.html"
+        missing_url="https://cdn.jsdelivr.net/gh/faizansaiyed123/Nexora-backend@fdb1485792351285bbc143d7bd460a6eacbf7f56/tests/fixtures/retail-price-missing.html"
         page.get_by_label("Competitor target URL").fill(missing_url)
         edited_match=submit(page,"Save changes",f"/v1/offering-matches/{match_id}","PATCH",200).json()
         assert edited_match["target_url"]==missing_url,edited_match
