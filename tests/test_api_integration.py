@@ -14,7 +14,12 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from backend.core.config import get_settings
-from backend.core.security import get_password_hash
+from backend.core.security import (
+    generate_secure_token,
+    get_password_hash,
+    hash_token,
+    verify_password,
+)
 from backend.core.rate_limit import TokenSessionStore
 from backend.api.v1 import collections as collections_route
 from backend.services.collection_service import CollectionResult, CollectionService
@@ -1062,3 +1067,68 @@ async def test_full_tenant_api_and_database_workflow(monkeypatch: pytest.MonkeyP
             f"/v1/offerings/{offering_id}/toggle-monitoring", headers=headers
         )
         assert archived_toggle.status_code == 400, archived_toggle.text
+
+
+@pytest.mark.asyncio
+async def test_password_reset_token_is_consumed_once_and_replay_cannot_change_password() -> None:
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://nexora.test",
+    ) as client:
+        email, _ = await _register(
+            client,
+            uuid.uuid4().hex[:10],
+            "Northstar Reset Token Regression",
+        )
+
+        async with AsyncSessionLocal() as session:
+            user = await session.scalar(
+                select(UserModel).where(UserModel.email == email)
+            )
+            assert user is not None
+            user_id = str(user.id)
+
+        reset_token = generate_secure_token(32)
+        await TokenSessionStore.store_password_reset_token(
+            token_hash=hash_token(reset_token),
+            user_id=user_id,
+            email=email,
+        )
+
+        new_password = "Nexora-Reset!2026"
+        reset = await client.post(
+            "/v1/auth/reset-password",
+            json={"token": reset_token, "new_password": new_password},
+        )
+        assert reset.status_code == 200, reset.text
+
+        replay_password = "Nexora-Replay!2026"
+        replay = await client.post(
+            "/v1/auth/reset-password",
+            json={"token": reset_token, "new_password": replay_password},
+        )
+        assert replay.status_code == 422, replay.text
+
+        invalid = await client.post(
+            "/v1/auth/reset-password",
+            json={
+                "token": f"invalid-{uuid.uuid4().hex}",
+                "new_password": "Nexora-Invalid!2026",
+            },
+        )
+        assert invalid.status_code == 422, invalid.text
+
+        async with AsyncSessionLocal() as session:
+            user = await session.scalar(
+                select(UserModel).where(UserModel.email == email)
+            )
+            assert user is not None
+            assert verify_password(new_password, user.hashed_password)
+            assert not verify_password(replay_password, user.hashed_password)
+            assert not verify_password("Nexora-Invalid!2026", user.hashed_password)
+
+        accepted_login = await client.post(
+            "/v1/auth/login",
+            json={"email": email, "password": new_password},
+        )
+        assert accepted_login.status_code == 200, accepted_login.text

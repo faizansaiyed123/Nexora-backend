@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio, json, os, re, subprocess, sys, threading, time, uuid
 from email import message_from_string
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 from playwright.sync_api import Page, sync_playwright
 from sqlalchemy import select
 from backend.core.security import get_password_hash
@@ -355,6 +355,9 @@ def main():
         shot(page,"03-email-verification-page.png")
         verified=submit(page,"Verify email","/v1/auth/verify-email","GET",200)
         assert verified.json().get("message")
+        # A consumed verification link must not be accepted a second time.
+        verification_replay=page.request.get(API+"/v1/auth/verify-email?"+urlparse(verify_url).query)
+        assert verification_replay.status==422,f"Verification token replay unexpectedly succeeded: {verification_replay.status} {verification_replay.text()}"
         page.get_by_role("link",name="Continue to sign in",exact=True).wait_for()
         shot(page,"04-email-verified.png")
         page.get_by_role("link",name="Continue to sign in",exact=True).click()
@@ -912,11 +915,20 @@ def main():
         page.get_by_role("heading",name="Check your inbox",exact=True).wait_for()
         shot(page,"39-password-reset-requested.png")
         reset_url=email_link(wait_email("Reset your Nexora password",EMAIL,reset_start),"reset-password")
+        reset_token=parse_qs(urlparse(reset_url).query).get("token",[""])[0]
+        assert reset_token,"Reset email did not contain a token."
         page.goto(reset_url,wait_until="networkidle")
         page.locator('input[autocomplete="new-password"]').wait_for()
         shot(page,"40-password-reset-form.png")
         page.locator('input[autocomplete="new-password"]').fill(RESET_PASSWORD)
         submit(page,"Update password","/v1/auth/reset-password",status=200)
+        # Reset tokens are one-time: replaying the same link cannot replace the new password.
+        reset_replay=page.request.post(
+            API+"/v1/auth/reset-password",
+            data=json.dumps({"token":reset_token,"new_password":"Nexora-Replay!2026"}),
+            headers={"Content-Type":"application/json"},
+        )
+        assert reset_replay.status==422,f"Password reset token replay unexpectedly succeeded: {reset_replay.status} {reset_replay.text()}"
         page.get_by_role("heading",name="Password updated",exact=True).wait_for()
         shot(page,"41-password-reset-complete.png")
         page.get_by_role("link",name="Continue to sign in",exact=True).click()
