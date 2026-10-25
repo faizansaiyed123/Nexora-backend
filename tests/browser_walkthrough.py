@@ -210,6 +210,26 @@ def dispatch_email_worker():
     assert lines,result.stdout+" "+result.stderr
     return json.loads(lines[-1])
 
+def enqueue_scheduled_collection():
+    """Dispatch scheduled work through Redis and wait for the real Celery task result."""
+    code = """
+import json
+from backend.workers.tasks import enqueue_monitored_match_jobs
+result = enqueue_monitored_match_jobs.delay()
+print(json.dumps({"task_id": result.id, "result": result.get(timeout=60)}))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=75,
+        env=os.environ.copy(),
+    )
+    rows = [line.strip() for line in result.stdout.splitlines() if line.strip().startswith("{")]
+    assert rows, result.stdout + " " + result.stderr
+    return json.loads(rows[-1])
+
 def verify_postgres_sync(client_id, competitor_id, source_id, offering_id, match_id,
                          rule_id, circuit_rule_id, alert_id, isolated_client_id, super_admin_email):
     """Verify the browser journey's important records with fresh PostgreSQL queries."""
@@ -220,7 +240,7 @@ from backend.db.session import AsyncSessionLocal
 from backend.models.alert import AlertLogModel, AlertRuleModel
 from backend.models.client import ClientModel, UserModel
 from backend.models.competitor import CompetitorModel, OfferingMatchModel, SourceModel
-from backend.models.enums import CircuitStateEnum, RoleEnum
+from backend.models.enums import CircuitStateEnum, JobStatusEnum, JobTypeEnum, RoleEnum
 from backend.models.notification import NotificationOutboxModel
 from backend.models.observation import JobModel, ObservationModel, SnapshotModel
 from backend.models.offering import OfferingModel
@@ -253,6 +273,17 @@ async def main():
             ObservationModel).where(ObservationModel.offering_match_id == match_id))
         jobs = await session.scalar(select(func.count()).select_from(JobModel).where(
             JobModel.source_id == source_id))
+        scheduled_rows = list((await session.execute(select(JobModel).where(
+            JobModel.source_id == source_id,
+            JobModel.job_type == JobTypeEnum.SCHEDULED_CRAWL,
+            JobModel.status == JobStatusEnum.COMPLETED,
+        ))).scalars().all())
+        completed_scheduled = [
+            row for row in scheduled_rows
+            if (row.meta_info or {}).get("offering_match_id") == str(match_id)
+            and row.successful_items == 1
+            and row.failed_items == 0
+        ]
         discovered = await session.scalar(select(OfferingModel).where(
             OfferingModel.client_id == tenant_id, OfferingModel.sku == "WF1000XM5-BLK"))
         notification_statuses = list((await session.execute(select(
@@ -279,8 +310,9 @@ async def main():
         assert alert is not None and alert.is_read, "Price-drop alert's read status was not saved."
         assert circuit_alert is not None, "Circuit-breaker alert log was not saved."
         assert snapshot is not None and str(snapshot.current_price).startswith("349.99"), "Latest snapshot was not saved."
-        assert int(observations or 0) >= 2, f"Expected persisted observations, got {observations}."
-        assert int(jobs or 0) >= 7, f"Expected successful and failed collection jobs, got {jobs}."
+        assert int(observations or 0) >= 3, f"Expected manual and scheduled observations to persist, got {observations}."
+        assert int(jobs or 0) >= 8, f"Expected successful, scheduled, and failed collection jobs, got {jobs}."
+        assert completed_scheduled, "No successful scheduled Celery collection was persisted for the browser journey."
         assert discovered is not None, "Discovered offering was not saved."
         assert isolated_client is not None and isolated_client.id != tenant_id, "Isolated organization was not saved separately."
         assert int(isolated_competitors or 0) == 0 and int(isolated_offerings or 0) == 0 and int(isolated_alerts or 0) == 0, "New tenant was not empty in PostgreSQL."
@@ -296,6 +328,8 @@ async def main():
             "snapshot_price": str(snapshot.current_price),
             "observations": int(observations or 0),
             "jobs": int(jobs or 0),
+            "scheduled_collection_jobs_completed": len(completed_scheduled),
+            "scheduled_collection_job_id": str(completed_scheduled[-1].id),
             "discovered_sku": discovered.sku,
             "source_circuit_state": source.circuit_state.value,
             "notification_statuses": notification_statuses,
@@ -831,6 +865,63 @@ def main():
         assert "Nexora detected a competitive intelligence event" in mail_body
         assert "SENT" in get_outbox_statuses_sync(client_id)
 
+        # Dispatch a scheduled refresh through Redis, let Celery execute it in a real
+        # worker process, then read the completed job and price observation back.
+        scheduled_dispatch = enqueue_scheduled_collection()
+        assert scheduled_dispatch["result"]["scheduled_jobs"] == 1, scheduled_dispatch
+
+        scheduled_job = None
+        scheduled_failed = None
+        scheduled_deadline = time.monotonic() + 60
+        while time.monotonic() < scheduled_deadline:
+            latest_jobs = get_api(page, "/v1/jobs")
+            candidates = [
+                row for row in latest_jobs
+                if row.get("job_type") == "SCHEDULED_CRAWL"
+                and (row.get("meta_info") or {}).get("offering_match_id") == match_id
+            ]
+            scheduled_failed = next(
+                (row for row in candidates if row.get("status") == "FAILED"),
+                None,
+            )
+            scheduled_job = next(
+                (
+                    row for row in candidates
+                    if row.get("status") == "COMPLETED"
+                    and row.get("successful_items") == 1
+                    and row.get("failed_items") == 0
+                ),
+                None,
+            )
+            if scheduled_job is not None:
+                break
+            if scheduled_failed is not None:
+                raise AssertionError(f"Scheduled Celery collection failed: {scheduled_failed}")
+            time.sleep(1)
+
+        assert scheduled_job is not None, (
+            "Celery did not complete the scheduled collection within 60 seconds. "
+            f"Last job response: {latest_jobs}"
+        )
+        scheduled_readback = get_api(page, f"/v1/jobs/{scheduled_job['id']}")
+        assert scheduled_readback["status"] == "COMPLETED", scheduled_readback
+        assert scheduled_readback["job_type"] == "SCHEDULED_CRAWL", scheduled_readback
+        assert scheduled_readback["successful_items"] == 1 and scheduled_readback["failed_items"] == 0, scheduled_readback
+        scheduled_history = get_api(page, f"/v1/offerings/{offering_id}/history")
+        assert len(scheduled_history) >= 3, scheduled_history
+        assert str(get_api(page, f"/v1/sources/{source_id}")["circuit_state"]) == "CLOSED"
+
+        page.get_by_role("link", name="Jobs", exact=True).click()
+        page.locator(".content h2").filter(has_text="Jobs").wait_for()
+        scheduled_row = page.locator("tbody tr").filter(
+            has_text=scheduled_job["id"]
+        ).filter(has_text="SCHEDULED CRAWL").first
+        scheduled_row.wait_for(timeout=15000)
+        assert scheduled_row.get_by_text("COMPLETED", exact=True).is_visible()
+        shot(page, "30b-scheduled-collection-completed.png")
+        page.get_by_role("link", name="Alerts", exact=True).click()
+        page.locator(".content h2").filter(has_text="Alerts").wait_for()
+
         # Repeated real source failures open the circuit and generate a persistent
         # operational alert. A final request is rejected before another job starts.
         page.get_by_role("button",name="New rule",exact=True).click()
@@ -1195,7 +1286,7 @@ def main():
             (47,"isolated-tenant-competitors.png"),(48,"isolated-tenant-catalog.png"),(49,"isolated-tenant-alerts.png"),
             (50,"mobile-dashboard.png"),(51,"mobile-homepage.png"),
         ]]
-        expected_names += ["02b-verification-email-resent.png","13b-source-js-rendering-enabled.png","22b-bulk-import-row-errors.png","23b-single-offering-archived.png","23c-catalog-pagination.png","23d-catalog-type-filter.png","25b-temporary-match-created.png","25c-temporary-match-deleted.png","29b-circuit-breaker-rule-form.png","29c-source-circuit-open.png","29d-circuit-breaker-alert.png","45b-super-admin-source-created.png","45c-super-admin-source-deleted.png","45d-super-admin-competitor-deleted.png","45e-super-admin-alert-rule-deleted.png"]
+        expected_names += ["02b-verification-email-resent.png","13b-source-js-rendering-enabled.png","22b-bulk-import-row-errors.png","23b-single-offering-archived.png","23c-catalog-pagination.png","23d-catalog-type-filter.png","25b-temporary-match-created.png","25c-temporary-match-deleted.png","29b-circuit-breaker-rule-form.png","29c-source-circuit-open.png","29d-circuit-breaker-alert.png","30b-scheduled-collection-completed.png","45b-super-admin-source-created.png","45c-super-admin-source-deleted.png","45d-super-admin-competitor-deleted.png","45e-super-admin-alert-rule-deleted.png"]
         missing=[name for name in expected_names if not (SHOTS/name).is_file()]
         assert not missing,"Missing visitor journey screens: "+str(missing)
         print(f"VISITOR JOURNEY COMPLETE: {len(expected_names)} screenshots captured; UI, API, PostgreSQL and mail flows completed.",flush=True)
