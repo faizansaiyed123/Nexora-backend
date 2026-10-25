@@ -403,7 +403,7 @@ def main():
         page.get_by_label("Source name").fill(SOURCE)
         page.get_by_label("Base URL").fill(HIGH_URL)
         choose(page,"Source type","OFFICIAL_STORE")
-        choose(page,"Collection method","PLAYWRIGHT_BROWSER")
+        choose(page,"Collection method","HTTP_FAST")
         shot(page,"10-source-form.png")
         source=submit(page,"Create source","/v1/sources").json()
         source_id=source["id"]
@@ -420,21 +420,14 @@ def main():
         config=submit(page,"Save configuration",f"/v1/sources/{source_id}/configuration","PATCH",200).json()
         assert config["rate_limit_rpm"]==60 and config["max_retries"]==1
 
-        page.get_by_title("Configuration",exact=True).click()
-        page.get_by_label("Require JavaScript rendering").check()
-        js_config=submit(page,"Save configuration",f"/v1/sources/{source_id}/configuration","PATCH",200).json()
-        assert js_config["requires_javascript"] is True,js_config
-        page.get_by_title("Configuration",exact=True).click()
-        assert page.get_by_label("Require JavaScript rendering").is_checked()
-        shot(page,"13b-source-js-rendering-enabled.png")
-        # Keep JavaScript rendering enabled for the real collection scenario below.
-        # Escape closes the active modal reliably even if a prior modal transition is still finishing.
-        page.keyboard.press("Escape")
-        page.locator(".modal-backdrop").wait_for(state="detached", timeout=5000)
+        # Change the existing source from HTTP-only to browser collection through the source editor.
+        # SourceService must persist the selected collection method and its JS-rendering setting together.
         page.get_by_title("Edit source",exact=True).click()
         page.get_by_label("Source name").fill(SOURCE+" Structured")
+        choose(page,"Collection method","PLAYWRIGHT_BROWSER")
         source_edit=submit(page,"Save changes",f"/v1/sources/{source_id}","PATCH",200).json()
-        assert source_edit["name"]==SOURCE+" Structured"
+        assert source_edit["name"]==SOURCE+" Structured",source_edit
+        assert source_edit["collection_method"]=="PLAYWRIGHT_BROWSER",source_edit
         source_rows=get_api(page,"/v1/sources")
         assert any(
             s["id"]==source_id
@@ -444,6 +437,12 @@ def main():
             for s in source_rows
         ),source_rows
         shot(page,"13-source-settings-saved.png")
+
+        page.get_by_title("Configuration",exact=True).click()
+        assert page.get_by_label("Require JavaScript rendering").is_checked()
+        shot(page,"13b-source-js-rendering-enabled.png")
+        page.keyboard.press("Escape")
+        page.locator(".modal-backdrop").wait_for(state="detached", timeout=5000)
 
         # Catalog CRUD, dynamic fields, bulk import/export and archive.
         page.get_by_role("link",name="Offerings",exact=True).click()
