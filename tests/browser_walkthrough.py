@@ -428,8 +428,9 @@ def main():
         assert page.get_by_label("Require JavaScript rendering").is_checked()
         shot(page,"13b-source-js-rendering-enabled.png")
         # Keep JavaScript rendering enabled for the real collection scenario below.
-        # Close the configuration modal before opening the separate source editor.
-        page.get_by_role("button",name="Cancel",exact=True).click()
+        # Escape closes the active modal reliably even if a prior modal transition is still finishing.
+        page.keyboard.press("Escape")
+        page.locator(".modal-backdrop").wait_for(state="detached", timeout=5000)
         page.get_by_title("Edit source",exact=True).click()
         page.get_by_label("Source name").fill(SOURCE+" Structured")
         source_edit=submit(page,"Save changes",f"/v1/sources/{source_id}","PATCH",200).json()
