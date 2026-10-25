@@ -211,24 +211,40 @@ def dispatch_email_worker():
     return json.loads(lines[-1])
 
 def enqueue_scheduled_collection():
-    """Dispatch scheduled work through Redis and wait for the real Celery task result."""
+    """Dispatch scheduled work through the configured Redis-backed Celery app."""
     code = """
 import json
-from backend.workers.tasks import enqueue_monitored_match_jobs
-result = enqueue_monitored_match_jobs.delay()
-print(json.dumps({"task_id": result.id, "result": result.get(timeout=60)}))
+from backend.workers.celery_app import celery_app
+result = celery_app.send_task("backend.workers.tasks.enqueue_monitored_match_jobs")
+try:
+    payload = {"task_id": result.id, "result": result.get(timeout=60)}
+except Exception as exc:
+    print(json.dumps({
+        "task_id": result.id,
+        "error_type": type(exc).__name__,
+        "error": str(exc),
+        "result_state": result.state,
+    }))
+    raise
+print(json.dumps(payload))
 """
     result = subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
-        check=True,
         timeout=75,
         env=os.environ.copy(),
     )
+    if result.returncode != 0:
+        raise AssertionError(
+            "Scheduled collection dispatch failed. "
+            f"Exit={result.returncode}\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+        )
     rows = [line.strip() for line in result.stdout.splitlines() if line.strip().startswith("{")]
     assert rows, result.stdout + " " + result.stderr
-    return json.loads(rows[-1])
+    payload = json.loads(rows[-1])
+    assert "error" not in payload, payload
+    return payload
 
 def verify_postgres_sync(client_id, competitor_id, source_id, offering_id, match_id,
                          rule_id, circuit_rule_id, alert_id, isolated_client_id, super_admin_email):
