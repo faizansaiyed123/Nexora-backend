@@ -90,6 +90,10 @@ class Settings(BaseSettings):
     residential_proxy_url: str = ""
     auto_render_enabled: bool = True
 
+    # Explicitly opt-in test-only allowance for the isolated local HTML fixture server.
+    # Never enable this in a deployed or production environment.
+    allow_local_test_fixtures: bool = False
+
     scheduled_collection_interval_minutes: int = 60
     job_lease_seconds: int = 3600
 
@@ -102,6 +106,8 @@ class Settings(BaseSettings):
                 "JWT_SECRET_KEY must be a random secret of at least 32 characters (placeholder values are rejected). "
                 'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(48))"'
             )
+        if self.allow_local_test_fixtures and self.environment.lower() in {"prod", "production"}:
+            raise ValueError("ALLOW_LOCAL_TEST_FIXTURES cannot be enabled in production.")
         if self.environment.lower() in {"prod", "production"} and "*" in self.allowed_hosts:
             raise ValueError("ALLOWED_HOSTS must be explicit in production.")
         if self.environment.lower() in {"prod", "production"} and not self.database_url.startswith(
