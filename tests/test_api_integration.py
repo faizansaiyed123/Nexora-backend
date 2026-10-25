@@ -752,6 +752,57 @@ async def test_full_tenant_api_and_database_workflow(monkeypatch: pytest.MonkeyP
         other_auth = await _login(client, other_email)
         other_headers = {"Authorization": f"Bearer {other_auth['access_token']}"}
 
+        # Private collection, comparison and notification data must not leak
+        # through tenant-wide list endpoints either.
+        other_sources = await client.get("/v1/sources", headers=other_headers)
+        assert other_sources.status_code == 200, other_sources.text
+        assert all(row["id"] != source_id for row in other_sources.json())
+        other_matches = await client.get("/v1/offering-matches", headers=other_headers)
+        assert other_matches.status_code == 200, other_matches.text
+        assert other_matches.json() == []
+        other_rules = await client.get("/v1/alerts/rules", headers=other_headers)
+        assert other_rules.status_code == 200, other_rules.text
+        assert other_rules.json() == []
+        other_logs = await client.get("/v1/alerts/logs", headers=other_headers)
+        assert other_logs.status_code == 200, other_logs.text
+        assert other_logs.json() == []
+        other_jobs = await client.get("/v1/jobs", headers=other_headers)
+        assert other_jobs.status_code == 200, other_jobs.text
+        assert other_jobs.json() == []
+        other_discovery_jobs = await client.get("/v1/discovery/jobs", headers=other_headers)
+        assert other_discovery_jobs.status_code == 200, other_discovery_jobs.text
+        assert other_discovery_jobs.json() == []
+
+        # Tenant-owned records cannot be mutated through the other workspace.
+        foreign_alert_rule_update = await client.patch(
+            f"/v1/alerts/rules/{rule_id}",
+            headers=other_headers,
+            json={"is_active": False},
+        )
+        assert foreign_alert_rule_update.status_code == 404, foreign_alert_rule_update.text
+        foreign_alert_log_read = await client.patch(
+            f"/v1/alerts/logs/{log_id}/read", headers=other_headers
+        )
+        assert foreign_alert_log_read.status_code == 404, foreign_alert_log_read.text
+        foreign_collection = await client.post(
+            "/v1/collections/run",
+            headers=other_headers,
+            params={"offering_match_id": match_id},
+        )
+        assert foreign_collection.status_code == 404, foreign_collection.text
+        foreign_source_delete = await client.delete(
+            f"/v1/sources/{source_id}", headers=other_headers
+        )
+        assert foreign_source_delete.status_code == 404, foreign_source_delete.text
+        foreign_match_delete = await client.delete(
+            f"/v1/offering-matches/{match_id}", headers=other_headers
+        )
+        assert foreign_match_delete.status_code == 404, foreign_match_delete.text
+        foreign_alert_rule_delete = await client.delete(
+            f"/v1/alerts/rules/{rule_id}", headers=other_headers
+        )
+        assert foreign_alert_rule_delete.status_code == 404, foreign_alert_rule_delete.text
+
         # Attempts to create linked records with another tenant's IDs must fail.
         foreign_source_create = await client.post(
             "/v1/sources",
