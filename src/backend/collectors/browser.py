@@ -66,5 +66,10 @@ async def render_page(url: str, timeout_seconds: int = 20) -> Optional[str]:
                         except Exception:
                             pass
         except Exception as exc:
-            logger.info("Browser rendering unavailable for %s: %s", url, exc)
+            logger.warning(
+                "Browser rendering failed for %s (%s): %s",
+                url,
+                type(exc).__name__,
+                exc,
+            )
             return None
