@@ -9,6 +9,7 @@ import ipaddress
 import re
 import socket
 from typing import Any, Dict, Optional, Tuple
+from backend.core.config import get_settings
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 BLOCKED_IP_NETWORKS = [
@@ -33,6 +34,18 @@ BLOCKED_IP_NETWORKS = [
 ]
 
 TRACKING_PARAM_PREFIXES = ("utm_", "fbclid", "gclid", "msclkid", "mc_eid", "yclid", "_ga", "_gl")
+
+# The only permitted loopback HTTP endpoints are fixed fixture files served by
+# tests/fixture_server.py. This boundary is opt-in, disabled by default, and
+# Settings rejects enabling it in production.
+LOCAL_TEST_FIXTURE_PORT = 8877
+LOCAL_TEST_FIXTURE_PATHS = frozenset({
+    "/fixtures/retail-price-high.html",
+    "/fixtures/retail-price-low.html",
+    "/fixtures/retail-price-js.html",
+    "/fixtures/retail-price-missing.html",
+    "/fixtures/retail-discovery-product.html",
+})
 
 ATTR_KEY_REGEX = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
@@ -59,9 +72,33 @@ class UrlSecurityService:
             return True
         return any(ip_obj in net for net in BLOCKED_IP_NETWORKS)
 
+    @staticmethod
+    def _is_local_test_fixture_host(hostname: str, port: int) -> bool:
+        settings = get_settings()
+        return (
+            settings.allow_local_test_fixtures
+            and settings.environment.lower() not in {"prod", "production"}
+            and hostname.lower() == "127.0.0.1"
+            and port == LOCAL_TEST_FIXTURE_PORT
+        )
+
+    @classmethod
+    def _is_local_test_fixture_url(cls, parsed) -> bool:
+        return (
+            cls._is_local_test_fixture_host(parsed.hostname or "", parsed.port or 0)
+            and parsed.scheme.lower() == "http"
+            and parsed.path in LOCAL_TEST_FIXTURE_PATHS
+            and not parsed.username
+            and not parsed.password
+            and not parsed.query
+            and not parsed.fragment
+        )
+
     @classmethod
     def resolve_and_validate_host(cls, hostname: str, port: int) -> str:
         """Resolve a hostname and return one validated public IP for the actual connection."""
+        if cls._is_local_test_fixture_host(hostname, port):
+            return "127.0.0.1"
         try:
             addr_info = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
         except socket.gaierror as exc:
@@ -122,6 +159,12 @@ class UrlSecurityService:
         hostname = parsed.hostname
         if not hostname:
             raise SecurityValidationError("Invalid URL: Hostname is missing or malformed.")
+
+        # In the isolated E2E environment, allow only fixed fixture paths on
+        # the dedicated loopback server. All other loopback/private URLs still
+        # fall through to the normal blocklist below.
+        if cls._is_local_test_fixture_url(parsed):
+            return urlunparse(parsed._replace(fragment=""))
 
         lowered_host = hostname.lower()
         if lowered_host in (
