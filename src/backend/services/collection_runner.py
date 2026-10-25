@@ -16,7 +16,7 @@ from backend.core.config import get_settings
 from backend.core.error_messages import safe_collection_error
 from backend.core.rate_limit import DistributedRateLimiter
 from backend.models.competitor import OfferingMatchModel, SourceModel
-from backend.models.enums import AvailabilityStatusEnum, ErrorCategoryEnum, JobStatusEnum
+from backend.models.enums import AvailabilityStatusEnum, CollectionMethodEnum, ErrorCategoryEnum, JobStatusEnum
 from backend.models.observation import JobModel, ObservationModel, SnapshotModel
 from backend.services.alert_service import AlertService
 from backend.services.collection_service import CollectionService
@@ -129,6 +129,11 @@ class CollectionRunner:
             headers = config.custom_headers if config and isinstance(config.custom_headers, dict) else None
             selectors = config.extraction_selectors if config and isinstance(config.extraction_selectors, dict) else None
 
+            must_render_in_browser = (
+                (config is not None and config.requires_javascript)
+                or source.collection_method == CollectionMethodEnum.PLAYWRIGHT_BROWSER
+            )
+
             if config:
                 await DistributedRateLimiter.check_rate_limit(
                     "source",
@@ -136,6 +141,8 @@ class CollectionRunner:
                     max_requests=config.rate_limit_rpm,
                     window_seconds=60,
                 )
+                if config.request_delay_seconds > 0:
+                    await asyncio.sleep(config.request_delay_seconds)
 
             result = await self.collector.collect(
                 match.target_url,
@@ -145,12 +152,7 @@ class CollectionRunner:
                 max_retries=config.max_retries if config else 0,
             )
 
-            if not result.success and (
-                result.attributes.get("possible_dynamic_rendering")
-                or result.attributes.get("possible_challenge")
-                or result.attributes.get("auto_rendered")
-                or result.extraction_status in ("TIMEOUT", "NO_DATA", "HTTP_ERROR")
-            ):
+            if must_render_in_browser:
                 try:
                     rendered = await asyncio.wait_for(
                         render_page(
@@ -159,19 +161,73 @@ class CollectionRunner:
                         ),
                         timeout=(config.timeout_seconds if config else 30) + 15,
                     )
-                    if rendered:
-                        result = self.collector.from_rendered_html(
-                            rendered,
-                            match.target_url,
-                            response_time_ms=result.response_time_ms,
-                            status_code=result.status_code or 200,
-                            custom_selectors=selectors,
-                        )
-                        result.attributes["auto_rendered"] = True
-                        result.attributes["collection_engine"] = "PLAYWRIGHT_AUTO_RENDER"
                 except Exception as exc:
-                    logger.info("Auto-render failed for %s: %s", match.target_url, exc)
-                    result.attributes["auto_render_error"] = str(exc)
+                    logger.info(
+                        "Required browser render failed for %s: %s",
+                        match.target_url,
+                        type(exc).__name__,
+                    )
+                    rendered = None
+
+                if rendered:
+                    result = self.collector.from_rendered_html(
+                        rendered,
+                        match.target_url,
+                        response_time_ms=result.response_time_ms,
+                        status_code=result.status_code or 200,
+                        custom_selectors=selectors,
+                    )
+                    result.attributes["collection_engine"] = "PLAYWRIGHT_BROWSER"
+                    result.attributes["javascript_rendered"] = True
+                else:
+                    # A successful static HTTP response is not sufficient when the
+                    # source explicitly requires browser-rendered content.
+                    result.success = False
+                    result.extraction_status = "RENDERING_FAILED"
+                    result.error = (
+                        "JavaScript rendering is required for this source, "
+                        "but the browser renderer did not return HTML."
+                    )
+                    result.attributes = {
+                        **(result.attributes or {}),
+                        "collection_engine": "PLAYWRIGHT_BROWSER",
+                        "javascript_rendering_failed": True,
+                    }
+            elif not result.success and (
+                result.attributes.get("possible_dynamic_rendering")
+                or result.attributes.get("possible_challenge")
+                or result.attributes.get("auto_rendered")
+                or result.extraction_status in ("TIMEOUT", "NO_DATA", "HTTP_ERROR")
+            ):
+                # Best-effort fallback for HTTP_FAST sources whose page appears to
+                # need rendering. It must not override the explicit JavaScript
+                # contract above.
+                try:
+                    rendered = await asyncio.wait_for(
+                        render_page(
+                            match.target_url,
+                            timeout_seconds=config.timeout_seconds if config else 30,
+                        ),
+                        timeout=(config.timeout_seconds if config else 30) + 15,
+                    )
+                except Exception as exc:
+                    logger.info(
+                        "Automatic browser fallback failed for %s: %s",
+                        match.target_url,
+                        type(exc).__name__,
+                    )
+                    rendered = None
+
+                if rendered:
+                    result = self.collector.from_rendered_html(
+                        rendered,
+                        match.target_url,
+                        response_time_ms=result.response_time_ms,
+                        status_code=result.status_code or 200,
+                        custom_selectors=selectors,
+                    )
+                    result.attributes["auto_rendered"] = True
+                    result.attributes["collection_engine"] = "PLAYWRIGHT_AUTO_RENDER"
 
             availability = self._availability(result.availability)
 
