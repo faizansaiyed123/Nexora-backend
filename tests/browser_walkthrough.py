@@ -316,12 +316,17 @@ def main():
     # This catches render failures instead of silently accepting stale HTML.
     rendered_probe=asyncio.run(render_page(JS_URL,timeout_seconds=25))
     if rendered_probe is not None:
+        title_match=re.search(r"<title[^>]*>(.*?)</title>",rendered_probe,re.IGNORECASE|re.DOTALL)
+        text_preview=re.sub(r"\\s+"," ",re.sub(r"<[^>]+>"," ",rendered_probe))
         print(
             "JAVASCRIPT_RENDER_PROBE "+json.dumps({
                 "rendered_marker": "data-render-state=\"rendered\"" in rendered_probe,
                 "dynamic_price_marker": "data-rendered-by=\"client-javascript\"" in rendered_probe,
                 "rendered_price_marker": "content=\"399.99\"" in rendered_probe,
                 "html_length": len(rendered_probe),
+                "title": title_match.group(1).strip()[:200] if title_match else None,
+                "text_preview": text_preview[:500],
+                "html_prefix": rendered_probe[:350],
             }),
             flush=True,
         )
