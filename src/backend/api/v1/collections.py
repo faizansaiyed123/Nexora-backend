@@ -23,6 +23,7 @@ from backend.models.observation import (
 )
 from backend.models.enums import (
     AvailabilityStatusEnum,
+    CollectionMethodEnum,
     JobStatusEnum,
     JobTypeEnum,
 )
@@ -207,7 +208,10 @@ async def run_collection(
                 collection_result.attributes["auto_rendered"] = True
                 collection_result.attributes["collection_engine"] = "PLAYWRIGHT_AUTO_RENDER"
 
-        elif configuration and configuration.requires_javascript:
+        elif (
+            (configuration is not None and configuration.requires_javascript)
+            or source.collection_method == CollectionMethodEnum.PLAYWRIGHT_BROWSER
+        ):
             try:
                 rendered_html = await asyncio.wait_for(
                     render_page(
