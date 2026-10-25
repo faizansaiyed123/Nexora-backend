@@ -9,6 +9,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -25,6 +26,7 @@ from backend.core.rate_limit import TokenSessionStore
 from backend.api.v1 import collections as collections_route
 from backend.services.collection_service import CollectionResult, CollectionService
 from backend.services.collection_runner import CollectionRunner
+from backend.services import collection_runner as collection_runner_module
 from backend.workers.tasks import _enqueue_monitored_match_jobs
 from backend.db.session import AsyncSessionLocal
 from backend.main import app
@@ -701,14 +703,25 @@ async def test_full_tenant_api_and_database_workflow(monkeypatch: pytest.MonkeyP
                 url=url,
                 status_code=200,
                 response_time_ms=27,
-                price=Decimal("2199.00"),
+                price=Decimal("349.99"),
                 currency="USD",
                 availability="IN_STOCK",
-                attributes={"source": "scheduled-worker-integration"},
+                attributes={"source": "scheduled-worker-integration", "extraction_strategy": "STATIC_HTML"},
                 extraction_status="PRICE_AND_AVAILABILITY",
             )
 
+        fixture_html = (
+            Path(__file__).parent.joinpath("fixtures", "retail-price-js.html")
+            .read_text(encoding="utf-8")
+            .replace("349.99", "399.99")
+            .replace('data-render-state="static"', 'data-render-state="rendered"')
+        )
+
+        async def rendered_product_page(url: str, timeout_seconds: int = 30) -> str:
+            return fixture_html
+
         monkeypatch.setattr(CollectionService, "collect", successful_scheduled_collect)
+        monkeypatch.setattr(collection_runner_module, "render_page", rendered_product_page)
         async with AsyncSessionLocal() as session:
             completed_schedule = await CollectionRunner().run(session, scheduled_job_id)
             assert completed_schedule.status == JobStatusEnum.COMPLETED
@@ -730,9 +743,10 @@ async def test_full_tenant_api_and_database_workflow(monkeypatch: pytest.MonkeyP
             assert completed_readback is not None
             assert completed_readback.status == JobStatusEnum.COMPLETED
             assert observation is not None
-            assert observation.observed_price == Decimal("2199.0000")
+            assert observation.observed_price == Decimal("399.9900")
+            assert observation.extracted_attributes["javascript_rendered"] is True
             assert snapshot is not None
-            assert snapshot.current_price == Decimal("2199.0000")
+            assert snapshot.current_price == Decimal("399.9900")
 
         # Exercise the individual job-detail read route with a persisted job row.
         finished_at = datetime.now(timezone.utc)
