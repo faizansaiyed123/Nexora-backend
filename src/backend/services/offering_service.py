@@ -230,7 +230,7 @@ class OfferingService:
                 validated_url = UrlSecurityService.validate_url(data.url)
             except SecurityValidationError as e:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=f"URL security validation failed: {str(e)}",
                 )
 
@@ -240,7 +240,7 @@ class OfferingService:
                 validated_image_url = UrlSecurityService.validate_url(data.image_url)
             except SecurityValidationError as e:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=f"Image URL security validation failed: {str(e)}",
                 )
 
@@ -248,7 +248,7 @@ class OfferingService:
             sanitized_attributes = UrlSecurityService.sanitize_attributes(data.attributes)
         except SecurityValidationError as e:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Attributes security validation failed: {str(e)}",
             )
 
@@ -589,7 +589,7 @@ class OfferingService:
                 update_fields["url"] = UrlSecurityService.validate_url(update_fields["url"])
             except SecurityValidationError as e:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=f"URL security validation failed: {str(e)}",
                 )
 
@@ -598,7 +598,7 @@ class OfferingService:
                 update_fields["image_url"] = UrlSecurityService.validate_url(update_fields["image_url"])
             except SecurityValidationError as e:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=f"Image URL security validation failed: {str(e)}",
                 )
 
@@ -611,7 +611,7 @@ class OfferingService:
                 await OfferingService._auto_discover_dynamic_fields(db, client_id, sanitized_new)
             except SecurityValidationError as e:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=f"Attributes security validation failed: {str(e)}",
                 )
 
