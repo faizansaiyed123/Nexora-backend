@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Sony WH-1000XM5 Wireless Headphones — Retail Listing</title>
+  <meta name="description" content="A repeatable retail listing whose displayed price changes after JavaScript renders.">
+  <script id="product-jsonld" type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    "name": "Sony WH-1000XM5 Wireless Headphones",
+    "sku": "WH1000XM5-BLK",
+    "brand": {"@type": "Brand", "name": "Sony"},
+    "category": "Electronics > Audio > Headphones",
+    "description": "Wireless over-ear headphones with active noise cancellation and multipoint Bluetooth.",
+    "offers": {
+      "@type": "Offer",
+      "price": "349.99",
+      "priceCurrency": "USD",
+      "availability": "https://schema.org/InStock"
+    }
+  }
+  </script>
+</head>
+<body>
+  <main id="product" data-render-state="static">
+    <h1>Sony WH-1000XM5 Wireless Headphones</h1>
+    <p class="sku">SKU: WH1000XM5-BLK</p>
+    <p class="price" itemprop="price" content="349.99">$349.99 USD</p>
+    <p class="availability">In stock</p>
+    <p>Wireless over-ear headphones with active noise cancellation and multipoint Bluetooth.</p>
+  </main>
+  <script>
+  document.addEventListener("DOMContentLoaded", () => {
+    const updatedProduct = {
+      "@context": "https://schema.org",
+      "@type": "Product",
+      "name": "Sony WH-1000XM5 Wireless Headphones",
+      "sku": "WH1000XM5-BLK",
+      "brand": {"@type": "Brand", "name": "Sony"},
+      "category": "Electronics > Audio > Headphones",
+      "description": "Wireless over-ear headphones with active noise cancellation and multipoint Bluetooth.",
+      "offers": {
+        "@type": "Offer",
+        "price": "399.99",
+        "priceCurrency": "USD",
+        "availability": "https://schema.org/InStock"
+      }
+    };
+    document.getElementById("product-jsonld").textContent = JSON.stringify(updatedProduct);
+    const price = document.querySelector(".price");
+    price.textContent = "$399.99 USD";
+    price.setAttribute("content", "399.99");
+    price.setAttribute("data-rendered-by", "client-javascript");
+    document.getElementById("product").setAttribute("data-render-state", "rendered");
+  });
+  </script>
+</body>
+</html>
