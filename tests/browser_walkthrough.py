@@ -28,10 +28,10 @@ COMPETITOR="Retail Product Reference"
 SOURCE="Retail Product Listing"
 OFFERING="Sony WH-1000XM5 Wireless Headphones"
 DISCOVERED="Sony WF-1000XM5 Truly Wireless Noise Canceling Earbuds"
-HIGH_URL="https://cdn.jsdelivr.net/gh/faizansaiyed123/Nexora-backend@fdb1485792351285bbc143d7bd460a6eacbf7f56/tests/fixtures/retail-price-high.html"
-JS_URL="https://cdn.jsdelivr.net/gh/faizansaiyed123/Nexora-backend@e14b3dc1700ecf4a39aa8f4886066d647b355c93/tests/fixtures/retail-price-js.html"
-LOW_URL="https://cdn.jsdelivr.net/gh/faizansaiyed123/Nexora-backend@fdb1485792351285bbc143d7bd460a6eacbf7f56/tests/fixtures/retail-price-low.html"
-DISCOVERY_URL="https://cdn.jsdelivr.net/gh/faizansaiyed123/Nexora-backend@fdb1485792351285bbc143d7bd460a6eacbf7f56/tests/fixtures/retail-discovery-product.html"
+HIGH_URL="http://127.0.0.1:8877/fixtures/retail-price-high.html"
+JS_URL="http://127.0.0.1:8877/fixtures/retail-price-js.html"
+LOW_URL="http://127.0.0.1:8877/fixtures/retail-price-low.html"
+DISCOVERY_URL="http://127.0.0.1:8877/fixtures/retail-discovery-product.html"
 BROWSER_ERRORS=[]
 def run_async(coro):
     """Run database coroutines on a dedicated loop outside Playwright's sync loop."""
@@ -836,7 +836,7 @@ def main():
         page.get_by_role("link",name="Matches",exact=True).click()
         match_row=page.locator("tbody tr").filter(has_text=OFFERING).first
         match_row.get_by_title("Edit",exact=True).click()
-        missing_url="https://cdn.jsdelivr.net/gh/faizansaiyed123/Nexora-backend@fdb1485792351285bbc143d7bd460a6eacbf7f56/tests/fixtures/retail-price-missing.html"
+        missing_url="http://127.0.0.1:8877/fixtures/retail-price-missing.html"
         page.get_by_label("Competitor target URL").fill(missing_url)
         edited_match=submit(page,"Save changes",f"/v1/offering-matches/{match_id}","PATCH",200).json()
         assert edited_match["target_url"]==missing_url,edited_match
