@@ -208,13 +208,22 @@ async def run_collection(
                 collection_result.attributes["collection_engine"] = "PLAYWRIGHT_AUTO_RENDER"
 
         elif configuration and configuration.requires_javascript:
-            rendered_html = await asyncio.wait_for(
-                render_page(
-                    target_url_val,
-                    timeout_seconds=configuration.timeout_seconds,
-                ),
-                timeout=configuration.timeout_seconds + 15,
-            )
+            try:
+                rendered_html = await asyncio.wait_for(
+                    render_page(
+                        target_url_val,
+                        timeout_seconds=configuration.timeout_seconds,
+                    ),
+                    timeout=configuration.timeout_seconds + 15,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "JavaScript rendering failed for source %s: %s",
+                    source.id,
+                    type(exc).__name__,
+                )
+                rendered_html = None
+
             if rendered_html:
                 collection_result = collector.from_rendered_html(
                     rendered_html,
@@ -223,6 +232,23 @@ async def run_collection(
                     status_code=collection_result.status_code or 200,
                     custom_selectors=selectors if isinstance(selectors, dict) else None,
                 )
+                collection_result.attributes["collection_engine"] = "PLAYWRIGHT_BROWSER"
+                collection_result.attributes["javascript_rendered"] = True
+            else:
+                # Do not report a stale pre-render price as a successful
+                # JavaScript collection when the source explicitly requires
+                # a browser-rendered page.
+                collection_result.success = False
+                collection_result.extraction_status = "RENDERING_FAILED"
+                collection_result.error = (
+                    "JavaScript rendering is required for this source, "
+                    "but the browser renderer did not return HTML."
+                )
+                collection_result.attributes = {
+                    **(collection_result.attributes or {}),
+                    "collection_engine": "PLAYWRIGHT_BROWSER",
+                    "javascript_rendering_failed": True,
+                }
 
 
         availability_value = (
