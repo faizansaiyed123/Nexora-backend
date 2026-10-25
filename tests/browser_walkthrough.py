@@ -734,6 +734,8 @@ def main():
         assert first_response.status in (200,201),first_response.text()
         first=first_response.json()
         assert first["status"]=="COMPLETED" and first["observation"]["http_status_code"]==200,first
+        assert first["observation"]["extracted_attributes"].get("collection_engine")=="PLAYWRIGHT_BROWSER",first
+        assert first["observation"]["extracted_attributes"].get("javascript_rendered") is True,first
         assert first["observation"]["price"]=="399.99",first
         assert len(get_api(page,f"/v1/offerings/{offering_id}/history"))>=1
         shot(page,"26-first-price-observation.png")
