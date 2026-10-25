@@ -8,7 +8,7 @@ from backend.services import url_security
 from backend.services.url_security import SecurityValidationError, UrlSecurityService
 
 
-FIXTURE_URL = "http://127.0.0.1:8877/fixtures/retail-price-js.html"
+FIXTURE_URL = "http://retail.northstar.example:8877/fixtures/retail-price-js.html"
 
 
 def settings(*, enabled: bool = False, environment: str = "development"):
@@ -18,39 +18,41 @@ def settings(*, enabled: bool = False, environment: str = "development"):
     )
 
 
-def test_local_fixture_urls_are_blocked_by_default(monkeypatch) -> None:
+def test_fixture_urls_are_blocked_by_default(monkeypatch) -> None:
     monkeypatch.setattr(url_security, "get_settings", lambda: settings())
     with pytest.raises(SecurityValidationError):
         UrlSecurityService.validate_url(FIXTURE_URL, allow_empty=False)
     with pytest.raises(SecurityValidationError):
-        UrlSecurityService.resolve_and_validate_host("127.0.0.1", 8877)
-
-
-def test_only_allowlisted_loopback_fixture_urls_are_allowed_in_test_mode(monkeypatch) -> None:
-    monkeypatch.setattr(url_security, "get_settings", lambda: settings(enabled=True))
-    assert UrlSecurityService.validate_url(FIXTURE_URL, allow_empty=False) == FIXTURE_URL
-    assert (
         UrlSecurityService.validate_url(
-            "http://127.0.0.1:8877/fixtures/retail-price-high.html",
+            "http://127.0.0.1:8877/fixtures/retail-price-js.html",
             allow_empty=False,
         )
-        == "http://127.0.0.1:8877/fixtures/retail-price-high.html"
-    )
-    assert UrlSecurityService.resolve_and_validate_host("127.0.0.1", 8877) == "127.0.0.1"
+    with pytest.raises(SecurityValidationError):
+        UrlSecurityService.resolve_and_validate_host("retail.northstar.example", 8877)
+
+
+def test_only_allowlisted_northstar_fixture_urls_are_allowed_in_test_mode(monkeypatch) -> None:
+    monkeypatch.setattr(url_security, "get_settings", lambda: settings(enabled=True))
+    assert UrlSecurityService.validate_url(FIXTURE_URL, allow_empty=False) == FIXTURE_URL
+    high_price_url = "http://retail.northstar.example:8877/fixtures/retail-price-high.html"
+    assert UrlSecurityService.validate_url(high_price_url, allow_empty=False) == high_price_url
+    assert UrlSecurityService.resolve_and_validate_host("retail.northstar.example", 8877) == "127.0.0.1"
 
 
 @pytest.mark.parametrize(
     "url",
     [
-        "http://127.0.0.1:8877/v1/health",
-        "http://127.0.0.1:8877/fixtures/../v1/health",
-        "http://127.0.0.1:8877/fixtures/retail-price-js.html?url=http://127.0.0.1:8000",
-        "http://127.0.0.1:8878/fixtures/retail-price-js.html",
+        "http://retail.northstar.example:8877/v1/health",
+        "http://retail.northstar.example:8877/fixtures/../v1/health",
+        "http://retail.northstar.example:8877/fixtures/retail-price-js.html?url=http://127.0.0.1:8000",
+        "http://retail.northstar.example:8878/fixtures/retail-price-js.html",
+        "http://other.northstar.example:8877/fixtures/retail-price-js.html",
+        "http://127.0.0.1:8877/fixtures/retail-price-js.html",
         "http://localhost:8877/fixtures/retail-price-js.html",
-        "http://127.0.0.1:8877/fixtures/unknown.html",
+        "http://retail.northstar.example:8877/fixtures/unknown.html",
     ],
 )
-def test_local_fixture_opt_in_does_not_allow_other_local_targets(monkeypatch, url: str) -> None:
+def test_fixture_opt_in_does_not_allow_other_local_targets(monkeypatch, url: str) -> None:
     monkeypatch.setattr(url_security, "get_settings", lambda: settings(enabled=True))
     with pytest.raises(SecurityValidationError):
         UrlSecurityService.validate_url(url, allow_empty=False)

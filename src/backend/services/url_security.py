@@ -78,7 +78,7 @@ class UrlSecurityService:
         return (
             settings.allow_local_test_fixtures
             and settings.environment.lower() not in {"prod", "production"}
-            and hostname.lower() == "127.0.0.1"
+            and hostname.lower().rstrip(".") == "retail.northstar.example"
             and port == LOCAL_TEST_FIXTURE_PORT
         )
 
@@ -186,7 +186,7 @@ class UrlSecurityService:
                         f"Target host resolves to a restricted private or link-local address ({ip_str})."
                     )
         except socket.gaierror:
-            if "." not in hostname or hostname.endswith((".local", ".internal", ".corp", ".lan", ".localhost")):
+            if "." not in hostname or hostname.endswith((".local", ".internal", ".corp", ".lan", ".localhost", ".example")):
                 raise SecurityValidationError(f"Domain '{hostname}' is not a valid or resolvable public domain.")
 
         clean_query = cls._strip_tracking_params(parsed.query)

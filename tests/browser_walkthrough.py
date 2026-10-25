@@ -28,10 +28,11 @@ COMPETITOR="Retail Product Reference"
 SOURCE="Retail Product Listing"
 OFFERING="Sony WH-1000XM5 Wireless Headphones"
 DISCOVERED="Sony WF-1000XM5 Truly Wireless Noise Canceling Earbuds"
-HIGH_URL="http://127.0.0.1:8877/fixtures/retail-price-high.html"
-JS_URL="http://127.0.0.1:8877/fixtures/retail-price-js.html"
-LOW_URL="http://127.0.0.1:8877/fixtures/retail-price-low.html"
-DISCOVERY_URL="http://127.0.0.1:8877/fixtures/retail-discovery-product.html"
+FIXTURE_ORIGIN="http://retail.northstar.example:8877"
+HIGH_URL=f"{FIXTURE_ORIGIN}/fixtures/retail-price-high.html"
+JS_URL=f"{FIXTURE_ORIGIN}/fixtures/retail-price-js.html"
+LOW_URL=f"{FIXTURE_ORIGIN}/fixtures/retail-price-low.html"
+DISCOVERY_URL=f"{FIXTURE_ORIGIN}/fixtures/retail-discovery-product.html"
 BROWSER_ERRORS=[]
 def run_async(coro):
     """Run database coroutines on a dedicated loop outside Playwright's sync loop."""
@@ -401,14 +402,14 @@ def main():
         shot(page,"07-competitors.png")
         page.get_by_role("button",name="Add competitor",exact=True).click()
         page.get_by_label("Name").fill("Retail Product Reference (initial)")
-        page.get_by_label("Domain").fill("cdn.jsdelivr.net")
+        page.get_by_label("Domain").fill("retail.northstar.example")
         competitor=submit(page,"Save competitor","/v1/competitors").json()
         competitor_id=competitor["id"]
         page.get_by_text("Retail Product Reference (initial)",exact=True).wait_for()
         shot(page,"08-competitor-created.png")
         page.get_by_role("button",name="Add competitor",exact=True).click()
         page.get_by_label("Name").fill("Duplicate Retail Reference")
-        page.get_by_label("Domain").fill("cdn.jsdelivr.net")
+        page.get_by_label("Domain").fill("retail.northstar.example")
         duplicate=submit(page,"Save competitor","/v1/competitors",status=403)
         assert "already exists" in duplicate.text().lower()
         shot(page,"09-duplicate-domain-protection.png")
@@ -836,7 +837,7 @@ def main():
         page.get_by_role("link",name="Matches",exact=True).click()
         match_row=page.locator("tbody tr").filter(has_text=OFFERING).first
         match_row.get_by_title("Edit",exact=True).click()
-        missing_url="http://127.0.0.1:8877/fixtures/retail-price-missing.html"
+        missing_url=f"{FIXTURE_ORIGIN}/fixtures/retail-price-missing.html"
         page.get_by_label("Competitor target URL").fill(missing_url)
         edited_match=submit(page,"Save changes",f"/v1/offering-matches/{match_id}","PATCH",200).json()
         assert edited_match["target_url"]==missing_url,edited_match
