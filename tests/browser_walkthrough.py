@@ -8,6 +8,7 @@ from playwright.sync_api import Page, sync_playwright
 from sqlalchemy import select
 from backend.core.security import get_password_hash
 from backend.db.session import AsyncSessionLocal, engine
+from backend.collectors.browser import render_page
 from backend.models.client import UserModel
 from backend.models.enums import RoleEnum
 from backend.models.notification import NotificationOutboxModel
@@ -310,6 +311,25 @@ asyncio.run(main())
 
 def main():
     SHOTS.mkdir(parents=True,exist_ok=True)
+    # Make the browser-render contract explicit before the product journey: the
+    # same public fixture has a static price and a different post-JavaScript price.
+    # This catches render failures instead of silently accepting stale HTML.
+    rendered_probe=asyncio.run(render_page(JS_URL,timeout_seconds=25))
+    if rendered_probe is not None:
+        print(
+            "JAVASCRIPT_RENDER_PROBE "+json.dumps({
+                "rendered_marker": "data-render-state=\"rendered\"" in rendered_probe,
+                "dynamic_price_marker": "data-rendered-by=\"client-javascript\"" in rendered_probe,
+                "rendered_price_marker": "content=\"399.99\"" in rendered_probe,
+                "html_length": len(rendered_probe),
+            }),
+            flush=True,
+        )
+    else:
+        print("JAVASCRIPT_RENDER_PROBE null",flush=True)
+    assert rendered_probe is not None and "data-rendered-by=\"client-javascript\"" in rendered_probe and "content=\"399.99\"" in rendered_probe, (\
+        "The configured browser renderer must execute page JavaScript; static 349.99 HTML is not sufficient."
+    )
     # A run must publish only screenshots captured by this run. Remove stale
     # PNGs and old DB evidence left by a prior failed journey.
     for stale_image in SHOTS.glob("*.png"):
