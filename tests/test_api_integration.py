@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -23,12 +24,14 @@ from backend.core.security import (
 from backend.core.rate_limit import TokenSessionStore
 from backend.api.v1 import collections as collections_route
 from backend.services.collection_service import CollectionResult, CollectionService
+from backend.services.collection_runner import CollectionRunner
+from backend.workers.tasks import _enqueue_monitored_match_jobs
 from backend.db.session import AsyncSessionLocal
 from backend.main import app
 from backend.models.alert import AlertLogModel
 from backend.models.client import UserModel
 from backend.models.enums import JobStatusEnum, JobTypeEnum, RoleEnum
-from backend.models.observation import JobModel
+from backend.models.observation import JobModel, ObservationModel, SnapshotModel
 
 
 INITIAL_PASSWORD = "Nexora-Strong!2026"
@@ -659,6 +662,77 @@ async def test_full_tenant_api_and_database_workflow(monkeypatch: pytest.MonkeyP
             },
         )
         assert duplicate_match.status_code == 400, duplicate_match.text
+
+        # Scheduled collection must enqueue one durable job per monitored match,
+        # deduplicate concurrent/overlapping schedule ticks, and run through the
+        # shared worker lease/persistence path rather than the on-demand API route.
+        monitoring_restored = await client.post(
+            f"/v1/offerings/{offering_id}/toggle-monitoring", headers=headers
+        )
+        assert monitoring_restored.status_code == 200, monitoring_restored.text
+        assert monitoring_restored.json()["is_monitored"] is True
+
+        scheduled_ids = await _enqueue_monitored_match_jobs()
+        assert len(scheduled_ids) == 1, scheduled_ids
+        scheduled_job_id = uuid.UUID(scheduled_ids[0])
+        async with AsyncSessionLocal() as session:
+            scheduled_job = await session.scalar(
+                select(JobModel).where(JobModel.id == scheduled_job_id)
+            )
+            assert scheduled_job is not None
+            assert scheduled_job.job_type == JobTypeEnum.SCHEDULED_CRAWL
+            assert scheduled_job.status == JobStatusEnum.PENDING
+            assert scheduled_job.meta_info["offering_match_id"] == match_id
+            assert scheduled_job.meta_info["scheduled"] is True
+
+        duplicate_schedule_tick = await _enqueue_monitored_match_jobs()
+        assert duplicate_schedule_tick == [], duplicate_schedule_tick
+
+        async def successful_scheduled_collect(
+            self,
+            url: str,
+            timeout: float = 30.0,
+            headers: dict | None = None,
+            custom_selectors: dict | None = None,
+            max_retries: int = 0,
+        ) -> CollectionResult:
+            return CollectionResult(
+                success=True,
+                url=url,
+                status_code=200,
+                response_time_ms=27,
+                price=Decimal("2199.00"),
+                currency="USD",
+                availability="IN_STOCK",
+                attributes={"source": "scheduled-worker-integration"},
+                extraction_status="PRICE_AND_AVAILABILITY",
+            )
+
+        monkeypatch.setattr(CollectionService, "collect", successful_scheduled_collect)
+        async with AsyncSessionLocal() as session:
+            completed_schedule = await CollectionRunner().run(session, scheduled_job_id)
+            assert completed_schedule.status == JobStatusEnum.COMPLETED
+            assert completed_schedule.successful_items == 1
+            assert completed_schedule.failed_items == 0
+
+        async with AsyncSessionLocal() as session:
+            completed_readback = await session.scalar(
+                select(JobModel).where(JobModel.id == scheduled_job_id)
+            )
+            observation = await session.scalar(
+                select(ObservationModel).where(ObservationModel.job_id == scheduled_job_id)
+            )
+            snapshot = await session.scalar(
+                select(SnapshotModel).where(
+                    SnapshotModel.offering_match_id == uuid.UUID(match_id)
+                )
+            )
+            assert completed_readback is not None
+            assert completed_readback.status == JobStatusEnum.COMPLETED
+            assert observation is not None
+            assert observation.observed_price == Decimal("2199.0000")
+            assert snapshot is not None
+            assert snapshot.current_price == Decimal("2199.0000")
 
         # Exercise the individual job-detail read route with a persisted job row.
         finished_at = datetime.now(timezone.utc)
