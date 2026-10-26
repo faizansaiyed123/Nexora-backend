@@ -36,3 +36,11 @@ temp/
 
 test_*.py
 !test_collection.py
+
+# Generated build and test output
+node_modules/
+coverage/
+playwright-report/
+test-results/
+storage/
+uploads/
