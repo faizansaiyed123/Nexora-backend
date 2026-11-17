@@ -14,6 +14,7 @@ from backend.api.v1.collections import router as collections_router
 from backend.api.v1.discovery import router as discovery_router
 from backend.api.v1.jobs import router as jobs_router
 from backend.api.v1.alerts import router as alerts_router
+from backend.api.v1.demo import router as demo_router
 from backend.core.config import get_settings
 from backend.core.exceptions import AppException
 from backend.services.url_security import SecurityValidationError
@@ -92,6 +93,7 @@ app.include_router(collections_router, prefix="/v1")
 app.include_router(discovery_router, prefix="/v1")
 app.include_router(jobs_router, prefix="/v1")
 app.include_router(alerts_router, prefix="/v1")
+app.include_router(demo_router, prefix="/v1")
 
 
 @app.get("/")
