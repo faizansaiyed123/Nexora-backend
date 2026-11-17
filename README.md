@@ -200,3 +200,13 @@ The API integration suite uses the configured database and Redis services. Use i
 - [Docker Compose configuration](docker-compose.yml)
 - [Render Blueprint](render.yaml)
 - [Backend CI workflow](.github/workflows/ci.yml)
+
+
+## Recruiter demo (`demo` branch)
+
+The `demo` branch adds dependency-free FastAPI endpoints under `/v1/demo` for demonstrating the core intelligence loop without external collection infrastructure. It does not replace the production API or persistence layer.
+
+- `GET /v1/demo/overview` — seeded workspace and competitive signal summary.
+- `POST /v1/demo/collect` — simulates a collection, price movement, completed job, observation, and alert.
+
+These endpoints are isolated to the `demo` branch. The production `main` branch is unchanged.
